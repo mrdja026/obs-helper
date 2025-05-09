@@ -1,0 +1,419 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
+
+// Define the scene interface
+interface OBSScene {
+    sceneName: string;
+    sceneIndex: number;
+}
+
+// Storage keys
+const STORAGE_KEY_URL = 'obs_websocket_url';
+const STORAGE_KEY_PASSWORD = 'obs_websocket_password';
+const STORAGE_KEY_AUTO_CONNECT = 'obs_websocket_auto_connect';
+const STORAGE_KEY_PASSWORD_PROMPTED = 'obs_websocket_password_prompted';
+
+// Backend proxy configuration from environment
+const PROXY_BASE_URL = Constants.expoConfig?.extra?.proxyBaseUrl || 'http://localhost:3000';
+const DEFAULT_OBS_URL = Constants.expoConfig?.extra?.defaultObsUrl || 'ws://127.0.0.1:4456';
+const DEFAULT_OBS_PASSWORD = Constants.expoConfig?.extra?.defaultObsPassword || '$$$$';
+
+export const useOBSProxy = () => {
+    // Connection settings
+    const [obsUrl, setObsUrl] = useState(DEFAULT_OBS_URL);
+    const [obsPassword, setObsPassword] = useState(DEFAULT_OBS_PASSWORD);
+    const [autoConnect, setAutoConnect] = useState(true);
+
+    // Connection state
+    const [isConnected, setIsConnected] = useState(false);
+    const [isConnecting, setIsConnecting] = useState(false);
+    const [isReconnecting, setIsReconnecting] = useState(false);
+    const [connectionError, setConnectionError] = useState<string | null>(null);
+
+    // Password prompt state
+    const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+    const [passwordPromptError, setPasswordPromptError] = useState<string | null>(null);
+
+    // OBS data
+    const [scenes, setScenes] = useState<OBSScene[]>([]);
+    const [currentScene, setCurrentScene] = useState<string>('');
+
+    // Reconnection timer
+    const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Polling timer for current scene
+    const pollingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Add a ref to track actual connection state
+    const isActuallyConnectedRef = useRef(false);
+
+    // Load saved connection settings
+    useEffect(() => {
+        const loadSettings = async () => {
+            try {
+                const savedUrl = await AsyncStorage.getItem(STORAGE_KEY_URL);
+                const savedPassword = await AsyncStorage.getItem(STORAGE_KEY_PASSWORD);
+                const savedAutoConnect = await AsyncStorage.getItem(STORAGE_KEY_AUTO_CONNECT);
+                const wasPasswordPrompted = await AsyncStorage.getItem(STORAGE_KEY_PASSWORD_PROMPTED);
+
+                if (savedUrl) setObsUrl(savedUrl);
+                if (savedPassword) setObsPassword(savedPassword);
+                if (savedAutoConnect !== null) setAutoConnect(savedAutoConnect === 'true');
+
+                // Show password prompt if no password is set and we haven't prompted yet
+                if (!savedPassword && wasPasswordPrompted !== 'true') {
+                    setShowPasswordPrompt(true);
+                    return; // Don't auto-connect if we need a password
+                }
+
+                // Auto connect if enabled
+                if (savedAutoConnect === 'true' && Platform.OS !== 'web') {
+                    setTimeout(() => {
+                        connect();
+                    }, 1000);
+                }
+            } catch (error) {
+                console.error('Failed to load settings:', error);
+            }
+        };
+
+        loadSettings();
+
+        // Cleanup function
+        return () => {
+            disconnect();
+            if (reconnectTimerRef.current) {
+                clearTimeout(reconnectTimerRef.current);
+            }
+            if (pollingTimerRef.current) {
+                clearInterval(pollingTimerRef.current);
+            }
+        };
+    }, []);
+
+    // Save settings when they change
+    useEffect(() => {
+        let saveTimeout: NodeJS.Timeout;
+        let isMounted = true;
+
+        const saveSettings = async () => {
+            try {
+                // Debounce the save operation
+                if (saveTimeout) {
+                    clearTimeout(saveTimeout);
+                }
+
+                saveTimeout = setTimeout(async () => {
+                    if (!isMounted) return;
+
+                    try {
+                        // Save settings in sequence to prevent race conditions
+                        await AsyncStorage.setItem(STORAGE_KEY_URL, obsUrl);
+                        await AsyncStorage.setItem(STORAGE_KEY_PASSWORD, obsPassword);
+                        await AsyncStorage.setItem(STORAGE_KEY_AUTO_CONNECT, autoConnect.toString());
+                        console.log('Settings saved successfully');
+                    } catch (error) {
+                        console.error('Failed to save settings:', error);
+                        // Show error to user
+                        setConnectionError('Failed to save settings. Please try again.');
+                    }
+                }, 500); // 500ms debounce
+            } catch (error) {
+                console.error('Failed to setup save settings:', error);
+                if (isMounted) {
+                    setConnectionError('Failed to setup settings save. Please try again.');
+                }
+            }
+        };
+
+        saveSettings();
+
+        // Cleanup function
+        return () => {
+            isMounted = false;
+            if (saveTimeout) {
+                clearTimeout(saveTimeout);
+            }
+        };
+    }, [obsUrl, obsPassword, autoConnect]);
+
+    // Function declarations
+    const fetchScenes = useCallback(async () => {
+        if (!isActuallyConnectedRef.current) {
+            console.log('Not actually connected, skipping fetchScenes');
+            return;
+        }
+
+        try {
+            console.log('Fetching scenes...');
+            const response = await fetch(`${PROXY_BASE_URL}/api/obs/scenes`);
+            console.log('Scenes response status:', response.status);
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Failed to fetch scenes:', errorText);
+                throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+            }
+
+            const data = await response.json();
+            console.log('Scenes fetched successfully:', data);
+            setScenes(data.scenes);
+        } catch (error) {
+            console.error('Error fetching scenes:', error);
+            if (error instanceof Error) {
+                console.error('Error details:', {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack
+                });
+            }
+        }
+    }, []);
+
+    const fetchCurrentScene = useCallback(async () => {
+        if (!isActuallyConnectedRef.current) {
+            console.log('Not actually connected, skipping fetchCurrentScene');
+            return;
+        }
+
+        try {
+            console.log('Fetching current scene...');
+            const response = await fetch(`${PROXY_BASE_URL}/api/obs/scene/current`);
+            console.log('Current scene response status:', response.status);
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Failed to fetch current scene:', errorText);
+                throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+            }
+
+            const data = await response.json();
+            console.log('Current scene fetched successfully:', data);
+            setCurrentScene(data.currentScene);
+        } catch (error) {
+            console.error('Error fetching current scene:', error);
+            if (error instanceof Error) {
+                console.error('Error details:', {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack
+                });
+            }
+        }
+    }, []);
+
+    const connect = useCallback(async () => {
+        if (isConnected || isConnecting) {
+            console.log('Already connected or connecting, skipping connection attempt');
+            return;
+        }
+
+        setIsConnecting(true);
+        setConnectionError(null);
+
+        try {
+            // Format the WebSocket URL properly for OBS
+            const obsWsUrl = obsUrl.startsWith('ws://') ? obsUrl : `ws://${obsUrl}`;
+
+            console.log('Attempting to connect to OBS proxy...');
+            console.log('Proxy URL:', `${PROXY_BASE_URL}/api/obs/connect`);
+            console.log('Connection settings:', {
+                host: obsWsUrl,
+                password: obsPassword
+            });
+
+            const response = await fetch(`${PROXY_BASE_URL}/api/obs/connect`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    host: obsWsUrl,
+                    password: obsPassword
+                }),
+            });
+
+            console.log('Connection response status:', response.status);
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Connection failed with response:', errorText);
+
+                // Handle specific error cases
+                if (response.status === 401 || response.status === 403) {
+                    setShowPasswordPrompt(true);
+                    setPasswordPromptError('Invalid password. Please try again.');
+                    throw new Error('Authentication failed');
+                }
+
+                throw new Error(`Connection failed: ${errorText}`);
+            }
+
+            console.log('Connection successful');
+
+            // Set both the state and the ref
+            setIsConnected(true);
+            isActuallyConnectedRef.current = true;
+
+            // Add a small delay to ensure OBS is ready
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // Fetch initial data immediately after connection
+            try {
+                console.log('Fetching initial scenes...');
+                await fetchScenes();
+                console.log('Fetching initial current scene...');
+                await fetchCurrentScene();
+            } catch (error) {
+                console.error('Error fetching initial data:', error);
+                // Don't disconnect on fetch error, just log it
+                // The polling will retry automatically
+            }
+
+            // Start polling for current scene
+            console.log('Starting scene polling...');
+            pollingTimerRef.current = setInterval(fetchCurrentScene, 1000);
+        } catch (error) {
+            console.error('Connection failed with error:', error);
+            if (error instanceof Error) {
+                console.error('Error details:', {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack
+                });
+            }
+
+            // Set a more user-friendly error message
+            let errorMessage = 'Failed to connect to OBS. ';
+            if (error instanceof Error) {
+                if (error.message.includes('ECONNREFUSED')) {
+                    errorMessage += 'Please check if OBS is running and the WebSocket server is enabled.';
+                } else if (error.message.includes('ETIMEDOUT')) {
+                    errorMessage += 'Connection timed out. Please check your network connection.';
+                } else if (error.message.includes('Invalid URL')) {
+                    errorMessage += 'Invalid OBS WebSocket URL. Please check your settings.';
+                } else {
+                    errorMessage += error.message;
+                }
+            }
+            setConnectionError(errorMessage);
+            setIsConnected(false);
+            isActuallyConnectedRef.current = false;
+
+            if (autoConnect && !isReconnecting) {
+                console.log('Auto-connect enabled, scheduling reconnection...');
+                setIsReconnecting(true);
+                reconnectTimerRef.current = setTimeout(() => {
+                    connect();
+                }, 3000);
+            }
+        } finally {
+            setIsConnecting(false);
+            setIsReconnecting(false);
+        }
+    }, [obsUrl, obsPassword, isConnected, isConnecting, autoConnect, isReconnecting, fetchScenes, fetchCurrentScene]);
+
+    const handlePasswordSave = useCallback(async (password: string, remember: boolean) => {
+        setObsPassword(password);
+        setShowPasswordPrompt(false);
+        setPasswordPromptError(null);
+
+        if (remember) {
+            await AsyncStorage.setItem(STORAGE_KEY_PASSWORD, password);
+        }
+        await AsyncStorage.setItem(STORAGE_KEY_PASSWORD_PROMPTED, 'true');
+
+        // Try to connect with the new password
+        connect();
+    }, [connect]);
+
+    const handlePasswordCancel = useCallback(() => {
+        setShowPasswordPrompt(false);
+        setPasswordPromptError(null);
+    }, []);
+
+    const disconnect = useCallback(() => {
+        console.log('Disconnecting from OBS...');
+        if (pollingTimerRef.current) {
+            clearInterval(pollingTimerRef.current);
+            pollingTimerRef.current = null;
+        }
+        if (reconnectTimerRef.current) {
+            clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = null;
+        }
+        setIsConnected(false);
+        isActuallyConnectedRef.current = false;
+        setConnectionError(null);
+    }, []);
+
+    const switchScene = useCallback(async (sceneName: string) => {
+        if (!isConnected) {
+            console.log('Not connected, skipping scene switch');
+            return;
+        }
+
+        try {
+            console.log('Switching to scene:', sceneName);
+            const response = await fetch(`${PROXY_BASE_URL}/api/obs/scene/change`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ sceneName }),
+            });
+
+            console.log('Scene switch response status:', response.status);
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Failed to switch scene:', errorText);
+                throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+            }
+
+            console.log('Scene switched successfully');
+            await fetchCurrentScene();
+        } catch (error) {
+            console.error('Error switching scene:', error);
+            if (error instanceof Error) {
+                console.error('Error details:', {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack
+                });
+            }
+        }
+    }, [isConnected, fetchCurrentScene]);
+
+    // Helper function to get error message
+    const getErrorMessage = (error: any): string => {
+        if (error instanceof Error) {
+            return error.message;
+        }
+        return 'An unknown error occurred';
+    };
+
+    return {
+        isConnected,
+        isConnecting,
+        isReconnecting,
+        connectionError,
+        scenes,
+        currentScene,
+        obsUrl,
+        setObsUrl,
+        obsPassword,
+        setObsPassword,
+        autoConnect,
+        setAutoConnect,
+        connect,
+        disconnect,
+        switchScene,
+        showPasswordPrompt,
+        setShowPasswordPrompt,
+        passwordPromptError,
+        handlePasswordSave,
+        handlePasswordCancel,
+    };
+}; 

@@ -5,26 +5,26 @@ import { StatusBar } from 'expo-status-bar';
 import { MaterialIcons } from '@expo/vector-icons';
 import Header from '@/components/Header';
 import Colors from '@/constants/Colors';
-import { useOBSWebSocket } from '@/hooks/useOBSWebSocket';
+import { useOBSProxy } from '@/hooks/useOBSProxy';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const {
-    websocketUrl,
-    websocketPassword,
-    setWebsocketUrl,
-    setWebsocketPassword,
+    obsUrl,
+    obsPassword,
     autoConnect,
     setAutoConnect,
-    connect
-  } = useOBSWebSocket();
+    connect,
+    setObsPassword,
+    setObsUrl
+  } = useOBSProxy();
 
-  const [url, setUrl] = useState(websocketUrl);
-  const [password, setPassword] = useState(websocketPassword);
-
+  const [url, setUrl] = useState(obsUrl);
+  const [password, setPassword] = useState(obsPassword);
   const handleSave = () => {
-    setWebsocketUrl(url);
-    setWebsocketPassword(password);
+    // Update the OBS URL and password in the context
+    setObsUrl(url);
+    setObsPassword(password);
 
     // Try to connect with new settings if autoConnect is enabled
     if (autoConnect) {

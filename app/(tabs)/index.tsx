@@ -5,40 +5,33 @@ import { StatusBar } from 'expo-status-bar';
 import Header from '@/components/Header';
 import SceneButton from '@/components/SceneButton';
 import ConnectionStatus from '@/components/ConnectionStatus';
-import { useOBSWebSocket } from '@/hooks/useOBSWebSocket';
+import { useOBSProxy } from '@/hooks/useOBSProxy';
 
 export default function ScenesScreen() {
   const insets = useSafeAreaInsets();
-  const { 
-    isConnected, 
-    currentScene, 
-    scenes, 
-    connect, 
-    disconnect, 
+  const {
+    isConnected,
+    currentScene,
+    scenes,
+    connect,
+    disconnect,
     switchScene,
-    toggleSourceVisibility,
     connectionError,
     isConnecting,
     isReconnecting
-  } = useOBSWebSocket();
+  } = useOBSProxy();
 
   const handleNatural1 = async () => {
     if (isConnected) {
-      // Show the Natural 1 effect for 3 seconds
-      await toggleSourceVisibility('Natural1Effect', true);
-      setTimeout(() => {
-        toggleSourceVisibility('Natural1Effect', false);
-      }, 3000);
+      // TODO: Implement through proxy
+      console.log('Natural 1 effect not implemented in proxy yet');
     }
   };
 
   const handleNatural20 = async () => {
     if (isConnected) {
-      // Show the Natural 20 effect for 3 seconds
-      await toggleSourceVisibility('Natural20Effect', true);
-      setTimeout(() => {
-        toggleSourceVisibility('Natural20Effect', false);
-      }, 3000);
+      // TODO: Implement through proxy
+      console.log('Natural 20 effect not implemented in proxy yet');
     }
   };
 
@@ -46,35 +39,35 @@ export default function ScenesScreen() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar style="light" />
       <Header title="OBS Scene Control" />
-      
-      <ConnectionStatus 
-        isConnected={isConnected} 
+
+      <ConnectionStatus
+        isConnected={isConnected}
         isConnecting={isConnecting}
         isReconnecting={isReconnecting}
         error={connectionError}
         onConnect={connect}
         onDisconnect={disconnect}
       />
-      
+
       <View style={styles.content}>
         <Text style={styles.sectionTitle}>D&D ROLL EFFECTS</Text>
         <View style={styles.effectButtons}>
-          <TouchableOpacity 
-            style={[styles.effectButton, styles.natural1Button]} 
+          <TouchableOpacity
+            style={[styles.effectButton, styles.natural1Button]}
             onPress={handleNatural1}
           >
             <Text style={styles.effectButtonText}>Natural 1!</Text>
           </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.effectButton, styles.natural20Button]} 
+          <TouchableOpacity
+            style={[styles.effectButton, styles.natural20Button]}
             onPress={handleNatural20}
           >
             <Text style={styles.effectButtonText}>Natural 20!</Text>
           </TouchableOpacity>
         </View>
-        
+
         <Text style={[styles.sectionTitle, styles.scenesTitle]}>AVAILABLE SCENES</Text>
-        <ScrollView 
+        <ScrollView
           style={styles.sceneList}
           contentContainerStyle={styles.sceneListContent}
           showsVerticalScrollIndicator={false}
