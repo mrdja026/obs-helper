@@ -27,7 +27,7 @@ export default {
             favicon: "./assets/favicon.png"
         },
         extra: {
-            proxyBaseUrl: 'http://192.168.0.234:3000',
+            proxyBaseUrl: 'http://192.168.0.234:3001',
             defaultObsUrl: 'ws://127.0.0.1:4456',
             defaultObsPassword: process.env.OBS_PASSWORD || ''
         }

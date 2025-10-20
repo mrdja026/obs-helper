@@ -1,11 +1,18 @@
-import React from 'react';
-import { View, StyleSheet, Text, ScrollView, TouchableOpacity } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { StatusBar } from 'expo-status-bar';
+import ConnectionStatus from '@/components/ConnectionStatus';
 import Header from '@/components/Header';
 import SceneButton from '@/components/SceneButton';
-import ConnectionStatus from '@/components/ConnectionStatus';
 import { useOBSProxy } from '@/hooks/useOBSProxy';
+import { StatusBar } from 'expo-status-bar';
+import React from 'react';
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function ScenesScreen() {
   const insets = useSafeAreaInsets();
@@ -18,7 +25,11 @@ export default function ScenesScreen() {
     switchScene,
     connectionError,
     isConnecting,
-    isReconnecting
+    isReconnecting,
+    toggleMic,
+    isMicMuted,
+    isMicLoading,
+    micError,
   } = useOBSProxy();
 
   const handleNatural1 = async () => {
@@ -48,50 +59,64 @@ export default function ScenesScreen() {
         onConnect={connect}
         onDisconnect={disconnect}
       />
+      <Text style={[styles.sectionTitle, styles.scenesTitle]}>
+        AVAILABLE SCENES
+      </Text>
+      <ScrollView
+        style={styles.sceneList}
+        contentContainerStyle={styles.sceneListContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {scenes.length > 0 ? (
+          scenes.map((scene, index) => (
+            <SceneButton
+              key={scene.sceneName}
+              name={scene.sceneName}
+              isActive={scene.sceneName === currentScene}
+              onPress={() => switchScene(scene.sceneName)}
+              isLast={index === scenes.length - 1}
+            />
+          ))
+        ) : (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>
+              No scenes available.{'\n'}
+              {isConnected
+                ? 'Try refreshing the connection.'
+                : 'Connect to OBS to see scenes.'}
+            </Text>
+          </View>
+        )}
+      </ScrollView>
 
-      <View style={styles.content}>
-        <Text style={styles.sectionTitle}>D&D ROLL EFFECTS</Text>
-        <View style={styles.effectButtons}>
-          <TouchableOpacity
-            style={[styles.effectButton, styles.natural1Button]}
-            onPress={handleNatural1}
-          >
-            <Text style={styles.effectButtonText}>Natural 1!</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.effectButton, styles.natural20Button]}
-            onPress={handleNatural20}
-          >
-            <Text style={styles.effectButtonText}>Natural 20!</Text>
-          </TouchableOpacity>
-        </View>
+      <View style={styles.sectionDivider} />
 
-        <Text style={[styles.sectionTitle, styles.scenesTitle]}>AVAILABLE SCENES</Text>
-        <ScrollView
-          style={styles.sceneList}
-          contentContainerStyle={styles.sceneListContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {scenes.length > 0 ? (
-            scenes.map((scene, index) => (
-              <SceneButton
-                key={scene.sceneName}
-                name={scene.sceneName}
-                isActive={scene.sceneName === currentScene}
-                onPress={() => switchScene(scene.sceneName)}
-                isLast={index === scenes.length - 1}
-              />
-            ))
-          ) : (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>
-                No scenes available.{'\n'}
-                {isConnected ? 'Try refreshing the connection.' : 'Connect to OBS to see scenes.'}
-              </Text>
-            </View>
-          )}
-        </ScrollView>
-      </View>
+      <Text style={[styles.sectionTitle, styles.audioTitle]}>
+        AUDIO CONTROLS
+      </Text>
+      <TouchableOpacity
+        style={[
+          styles.micButton,
+          isMicMuted === false ? styles.micButtonOn : styles.micButtonOff,
+          !isConnected || isMicLoading ? styles.micButtonDisabled : null,
+        ]}
+        onPress={toggleMic}
+        disabled={!isConnected || isMicLoading}
+        activeOpacity={0.7}
+      >
+        {isMicLoading ? (
+          <ActivityIndicator color="#FFFFFF" />
+        ) : (
+          <Text style={styles.micButtonText}>
+            {isMicMuted === false
+              ? 'Mic Live — tap to mute'
+              : isMicMuted === true
+              ? 'Mic Muted — tap to unmute'
+              : 'Mic status unavailable'}
+          </Text>
+        )}
+      </TouchableOpacity>
+      {micError ? <Text style={styles.micErrorText}>{micError}</Text> : null}
     </View>
   );
 }
@@ -114,6 +139,9 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
   },
   scenesTitle: {
+    marginTop: 24,
+  },
+  audioTitle: {
     marginTop: 24,
   },
   sceneList: {
@@ -162,6 +190,42 @@ const styles = StyleSheet.create({
     fontFamily: 'Orbitron-Bold',
     fontSize: 16,
     color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: '#1F1F1F',
+    marginTop: 24,
+    marginBottom: 24,
+  },
+  micButton: {
+    paddingVertical: 18,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#2C2C2C',
+  },
+  micButtonOn: {
+    backgroundColor: 'rgba(68, 255, 68, 0.1)',
+  },
+  micButtonOff: {
+    backgroundColor: 'rgba(255, 68, 68, 0.1)',
+  },
+  micButtonDisabled: {
+    opacity: 0.6,
+  },
+  micButtonText: {
+    fontFamily: 'Orbitron-Bold',
+    fontSize: 16,
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  micErrorText: {
+    marginTop: 12,
+    fontFamily: 'Roboto-Medium',
+    fontSize: 13,
+    color: '#FF6B6B',
     textAlign: 'center',
   },
 });

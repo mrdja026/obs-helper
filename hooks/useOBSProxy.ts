@@ -16,7 +16,7 @@ const STORAGE_KEY_AUTO_CONNECT = 'obs_websocket_auto_connect';
 const STORAGE_KEY_PASSWORD_PROMPTED = 'obs_websocket_password_prompted';
 
 // Backend proxy configuration from environment
-const PROXY_BASE_URL = Constants.expoConfig?.extra?.proxyBaseUrl || 'http://localhost:3000';
+const PROXY_BASE_URL = Constants.expoConfig?.extra?.proxyBaseUrl || 'http://localhost:3001';
 const DEFAULT_OBS_URL = Constants.expoConfig?.extra?.defaultObsUrl || 'ws://127.0.0.1:4456';
 const DEFAULT_OBS_PASSWORD = Constants.expoConfig?.extra?.defaultObsPassword || '$$$$';
 
@@ -39,6 +39,10 @@ export const useOBSProxy = () => {
     // OBS data
     const [scenes, setScenes] = useState<OBSScene[]>([]);
     const [currentScene, setCurrentScene] = useState<string>('');
+    const [isMicMuted, setIsMicMuted] = useState<boolean | null>(null);
+    const [micInputName, setMicInputName] = useState<string | null>(null);
+    const [isMicLoading, setIsMicLoading] = useState(false);
+    const [micError, setMicError] = useState<string | null>(null);
 
     // Reconnection timer
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -203,6 +207,42 @@ export const useOBSProxy = () => {
         }
     }, []);
 
+    const fetchMicStatus = useCallback(async () => {
+        if (!isActuallyConnectedRef.current) {
+            console.log('Not actually connected, skipping fetchMicStatus');
+            return;
+        }
+
+        setIsMicLoading(true);
+        setMicError(null);
+
+        try {
+            console.log('Fetching mic status...');
+            const response = await fetch(`${PROXY_BASE_URL}/api/obs/mic/status`);
+            console.log('Mic status response status:', response.status);
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Failed to fetch mic status:', errorText);
+                throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+            }
+
+            const data = await response.json();
+            console.log('Mic status fetched successfully:', data);
+            setIsMicMuted(typeof data.inputMuted === 'boolean' ? data.inputMuted : null);
+            setMicInputName(typeof data.inputName === 'string' ? data.inputName : null);
+        } catch (error) {
+            console.error('Error fetching mic status:', error);
+            if (error instanceof Error) {
+                setMicError(error.message);
+            } else {
+                setMicError('Failed to fetch microphone status.');
+            }
+        } finally {
+            setIsMicLoading(false);
+        }
+    }, []);
+
     const connect = useCallback(async () => {
         if (isConnected || isConnecting) {
             console.log('Already connected or connecting, skipping connection attempt');
@@ -265,6 +305,8 @@ export const useOBSProxy = () => {
                 await fetchScenes();
                 console.log('Fetching initial current scene...');
                 await fetchCurrentScene();
+                console.log('Fetching initial mic status...');
+                await fetchMicStatus();
             } catch (error) {
                 console.error('Error fetching initial data:', error);
                 // Don't disconnect on fetch error, just log it
@@ -300,19 +342,23 @@ export const useOBSProxy = () => {
             setConnectionError(errorMessage);
             setIsConnected(false);
             isActuallyConnectedRef.current = false;
+            setIsMicMuted(null);
+            setMicInputName(null);
+            setMicError(error instanceof Error ? error.message : 'Failed to connect to microphone.');
+            setIsMicLoading(false);
 
             if (autoConnect && !isReconnecting) {
                 console.log('Auto-connect enabled, scheduling reconnection...');
                 setIsReconnecting(true);
                 reconnectTimerRef.current = setTimeout(() => {
                     connect();
-                }, 3000);
+                }, 3001);
             }
         } finally {
             setIsConnecting(false);
             setIsReconnecting(false);
         }
-    }, [obsUrl, obsPassword, isConnected, isConnecting, autoConnect, isReconnecting, fetchScenes, fetchCurrentScene]);
+    }, [obsUrl, obsPassword, isConnected, isConnecting, autoConnect, isReconnecting, fetchScenes, fetchCurrentScene, fetchMicStatus]);
 
     const handlePasswordSave = useCallback(async (password: string, remember: boolean) => {
         setObsPassword(password);
@@ -346,6 +392,52 @@ export const useOBSProxy = () => {
         setIsConnected(false);
         isActuallyConnectedRef.current = false;
         setConnectionError(null);
+        setIsMicMuted(null);
+        setMicInputName(null);
+        setMicError(null);
+        setIsMicLoading(false);
+    }, []);
+
+    const toggleMic = useCallback(async () => {
+        if (!isActuallyConnectedRef.current) {
+            console.log('Not actually connected, skipping toggleMic');
+            return;
+        }
+
+        setIsMicLoading(true);
+        setMicError(null);
+
+        try {
+            console.log('Toggling mic...');
+            const response = await fetch(`${PROXY_BASE_URL}/api/obs/mic/toggle`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            console.log('Mic toggle response status:', response.status);
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Failed to toggle mic:', errorText);
+                throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+            }
+
+            const data = await response.json();
+            console.log('Mic toggled successfully:', data);
+            setIsMicMuted(typeof data.inputMuted === 'boolean' ? data.inputMuted : null);
+            setMicInputName(typeof data.inputName === 'string' ? data.inputName : null);
+        } catch (error) {
+            console.error('Error toggling mic:', error);
+            if (error instanceof Error) {
+                setMicError(error.message);
+            } else {
+                setMicError('Failed to toggle microphone.');
+            }
+        } finally {
+            setIsMicLoading(false);
+        }
     }, []);
 
     const switchScene = useCallback(async (sceneName: string) => {
@@ -410,6 +502,12 @@ export const useOBSProxy = () => {
         connect,
         disconnect,
         switchScene,
+        fetchMicStatus,
+        toggleMic,
+        isMicMuted,
+        isMicLoading,
+        micInputName,
+        micError,
         showPasswordPrompt,
         setShowPasswordPrompt,
         passwordPromptError,
