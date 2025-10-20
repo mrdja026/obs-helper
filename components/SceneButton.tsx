@@ -1,15 +1,15 @@
-import React, { useEffect } from 'react';
-import { StyleSheet, Text, TouchableOpacity, Platform } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import Colors from '@/constants/Colors';
 import * as Haptics from 'expo-haptics';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
+import { LinearGradient } from 'expo-linear-gradient';
+import React, { useEffect, useRef } from 'react';
+import {
+  Animated,
   Easing,
-  interpolateColor,
-} from 'react-native-reanimated';
+  Platform,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+} from 'react-native';
 
 type SceneButtonProps = {
   name: string;
@@ -18,71 +18,73 @@ type SceneButtonProps = {
   isLast?: boolean;
 };
 
-export default function SceneButton({ name, isActive, onPress, isLast = false }: SceneButtonProps) {
-  const activeBorderOpacity = useSharedValue(isActive ? 1 : 0);
-  const backgroundColorValue = useSharedValue(isActive ? 1 : 0);
-  
+export default function SceneButton({
+  name,
+  isActive,
+  onPress,
+  isLast = false,
+}: SceneButtonProps) {
+  const activeBorderOpacity = useRef(
+    new Animated.Value(isActive ? 1 : 0)
+  ).current;
+  const backgroundColorValue = useRef(
+    new Animated.Value(isActive ? 1 : 0)
+  ).current;
+
   // Update animation values when active state changes
   useEffect(() => {
-    activeBorderOpacity.value = withTiming(isActive ? 1 : 0, {
+    Animated.timing(activeBorderOpacity, {
+      toValue: isActive ? 1 : 0,
       duration: 300,
       easing: Easing.bezier(0.25, 0.1, 0.25, 1),
-    });
-    
-    backgroundColorValue.value = withTiming(isActive ? 1 : 0, {
+      useNativeDriver: true,
+    }).start();
+
+    Animated.timing(backgroundColorValue, {
+      toValue: isActive ? 1 : 0,
       duration: 300,
       easing: Easing.bezier(0.25, 0.1, 0.25, 1),
-    });
-  }, [isActive]);
-  
+      useNativeDriver: false,
+    }).start();
+  }, [isActive, activeBorderOpacity, backgroundColorValue]);
+
   const handlePress = () => {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
     onPress();
   };
-  
-  const animatedBorderStyle = useAnimatedStyle(() => {
-    return {
-      opacity: activeBorderOpacity.value,
-    };
+
+  const animatedBorderStyle = {
+    opacity: activeBorderOpacity,
+  } as const;
+
+  const backgroundColor = backgroundColorValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: [Colors.cardDark, Colors.primaryDark],
   });
-  
-  const animatedBackgroundStyle = useAnimatedStyle(() => {
-    const backgroundColor = interpolateColor(
-      backgroundColorValue.value,
-      [0, 1],
-      [Colors.cardDark, Colors.primaryDark]
-    );
-    
-    return {
-      backgroundColor,
-    };
-  });
+  const animatedBackgroundStyle = { backgroundColor } as const;
 
   return (
-    <Animated.View style={[
-      styles.container, 
-      animatedBackgroundStyle,
-      isLast ? null : styles.marginBottom
-    ]}>
-      <TouchableOpacity 
+    <Animated.View
+      style={[
+        styles.container,
+        animatedBackgroundStyle,
+        isLast ? null : styles.marginBottom,
+      ]}
+    >
+      <TouchableOpacity
         style={styles.button}
         onPress={handlePress}
         activeOpacity={0.7}
       >
-        <Text style={[
-          styles.sceneName,
-          isActive && styles.sceneNameActive
-        ]}>
+        <Text style={[styles.sceneName, isActive && styles.sceneNameActive]}>
           {name}
         </Text>
-        
-        {isActive && (
-          <Text style={styles.activeIndicator}>ACTIVE</Text>
-        )}
+
+        {isActive && <Text style={styles.activeIndicator}>ACTIVE</Text>}
       </TouchableOpacity>
-      
+
       <Animated.View style={[styles.borderContainer, animatedBorderStyle]}>
         <LinearGradient
           colors={[Colors.accent, Colors.primary, Colors.secondary]}
