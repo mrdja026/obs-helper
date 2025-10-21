@@ -112,6 +112,8 @@ export const useOBSProxy = () => {
 
   // Add a ref to track actual connection state
   const isActuallyConnectedRef = useRef(false);
+  // Ref to hold latest connect function to avoid TDZ/cycles
+  const connectRef = useRef<() => Promise<void>>(async () => {});
 
   // Load saved connection settings
   useEffect(() => {
@@ -203,10 +205,9 @@ export const useOBSProxy = () => {
                   // fall back to polling reconnect logic
                   if (autoConnect && !isReconnecting) {
                     setIsReconnecting(true);
-                    reconnectTimerRef.current = setTimeout(
-                      () => connect(),
-                      3001
-                    );
+                    reconnectTimerRef.current = setTimeout(() => {
+                      void connectRef.current();
+                    }, 3001);
                   }
                 }
               }
@@ -262,11 +263,12 @@ export const useOBSProxy = () => {
         wsRef.current = null;
       };
     } catch {}
-  }, [autoConnect, isReconnecting, connect]);
+  }, [autoConnect, isReconnecting]);
 
   // Save settings when they change
+  //Wodo magic this is not how it should be done.
   useEffect(() => {
-    let saveTimeout: NodeJS.Timeout;
+    let saveTimeout: ReturnType<typeof setTimeout>;
     let isMounted = true;
 
     const saveSettings = async () => {
@@ -588,6 +590,11 @@ export const useOBSProxy = () => {
     fetchCurrentScene,
     fetchMicStatus,
   ]);
+
+  // Keep ref updated with latest connect function
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   const handlePasswordSave = useCallback(
     async (password: string, remember: boolean) => {
