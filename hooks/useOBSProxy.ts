@@ -48,6 +48,15 @@ interface SongQueueItem {
   title: string;
   requestedBy: string;
   requestedAt: number;
+  matchStatus?: 'pending' | 'matched' | 'error';
+  spotify?: {
+    id: string;
+    uri: string;
+    name: string;
+    artists: string[];
+    confidence?: number;
+  } | null;
+  matchError?: string | null;
 }
 
 // Storage keys

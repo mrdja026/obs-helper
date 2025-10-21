@@ -249,6 +249,13 @@ export default function ScenesScreen() {
                       </Text>
                     </View>
                     <View style={styles.queueActions}>
+                      {item.matchStatus === 'matched' ? (
+                        <Text style={{ color: '#03DAC6', marginRight: 8 }}>✓</Text>
+                      ) : item.matchStatus === 'pending' ? (
+                        <Text style={{ color: '#B0B0B0', marginRight: 8 }}>…</Text>
+                      ) : item.matchStatus === 'error' ? (
+                        <MaterialIcons name="error-outline" size={16} color="#FF6B6B" style={{ marginRight: 8 }} />
+                      ) : null}
                       <TouchableOpacity
                         style={[
                           styles.removeButton,
@@ -264,6 +271,28 @@ export default function ScenesScreen() {
                           color="#FFFFFF"
                         />
                         <Text style={styles.actionText}>Remove</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.rowSkipButton,
+                          (item.matchStatus !== 'matched' || isQueueActionLoading)
+                            ? styles.actionDisabled
+                            : null,
+                        ]}
+                        onPress={async () => {
+                          try {
+                            await fetch(`${process.env.EXPO_PUBLIC_PROXY_BASE_URL || 'http://localhost:3001'}/api/spotify/queue`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ itemId: item.id }),
+                            });
+                          } catch {}
+                        }}
+                        disabled={item.matchStatus !== 'matched' || isQueueActionLoading}
+                        activeOpacity={0.7}
+                      >
+                        <MaterialIcons name="play-arrow" size={16} color="#FFFFFF" />
+                        <Text style={styles.actionText}>Play</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={[

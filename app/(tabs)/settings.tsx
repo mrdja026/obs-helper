@@ -1,11 +1,25 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, Text, TextInput, TouchableOpacity, ScrollView, Switch, KeyboardAvoidingView, Platform } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { StatusBar } from 'expo-status-bar';
-import { MaterialIcons } from '@expo/vector-icons';
 import Header from '@/components/Header';
 import Colors from '@/constants/Colors';
 import { useOBSProxy } from '@/hooks/useOBSProxy';
+import { MaterialIcons } from '@expo/vector-icons';
+import * as Crypto from 'expo-crypto';
+import * as Linking from 'expo-linking';
+import * as Random from 'expo-random';
+import { StatusBar } from 'expo-status-bar';
+import * as WebBrowser from 'expo-web-browser';
+import React, { useState } from 'react';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
@@ -16,7 +30,7 @@ export default function SettingsScreen() {
     setAutoConnect,
     connect,
     setObsPassword,
-    setObsUrl
+    setObsUrl,
   } = useOBSProxy();
 
   const [url, setUrl] = useState(obsUrl);
@@ -29,6 +43,92 @@ export default function SettingsScreen() {
     // Try to connect with new settings if autoConnect is enabled
     if (autoConnect) {
       connect();
+    }
+  };
+
+  const base64Url = (input: string) =>
+    input.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+  const makeVerifier = async (): Promise<string> => {
+    const bytes = await Random.getRandomBytesAsync(64);
+    const chars =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+    let out = '';
+    for (let i = 0; i < bytes.length; i++)
+      out += chars[bytes[i] % chars.length];
+    return out; // 43-128 chars per RFC 7636
+  };
+
+  const handleSpotifyConnect = async () => {
+    try {
+      const redirectUri =
+        Platform.OS === 'web'
+          ? 'https://127.0.0.1:8443/oauthredirect'
+          : 'obshelper://oauthredirect';
+      const clientId =
+        process.env.EXPO_PUBLIC_SPOTIFY_CLIENT_ID ||
+        // fallback to app config extra if provided
+        (require('expo-constants').default.expoConfig?.extra
+          ?.spotifyClientId as string) ||
+        '';
+      const scopes = ['user-modify-playback-state', 'user-read-playback-state'];
+      const verifier = await makeVerifier();
+      const digest = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        verifier,
+        { encoding: Crypto.CryptoEncoding.BASE64 }
+      );
+      const challenge = base64Url(digest);
+      const params = new URLSearchParams({
+        client_id: clientId,
+        response_type: 'code',
+        redirect_uri: redirectUri,
+        code_challenge_method: 'S256',
+        code_challenge: challenge,
+        scope: scopes.join(' '),
+      });
+      const authUrl = `https://accounts.spotify.com/authorize?${params.toString()}`;
+      if (Platform.OS === 'web') {
+        try {
+          sessionStorage.setItem('spotify_pkce_verifier', verifier);
+          sessionStorage.setItem('spotify_redirect_uri', redirectUri);
+          try {
+            localStorage.setItem('spotify_pkce_verifier', verifier);
+          } catch {}
+          try {
+            localStorage.setItem('spotify_redirect_uri', redirectUri);
+          } catch {}
+        } catch {}
+        window.location.href = authUrl; // go to Spotify, then back to /oauthredirect
+        return;
+      } else {
+        const result = await WebBrowser.openAuthSessionAsync(
+          authUrl,
+          redirectUri
+        );
+        if (result.type === 'success' && result.url) {
+          const parsed = Linking.parse(result.url);
+          const code = parsed.queryParams?.code as string | undefined;
+          if (code) {
+            const proxyBase =
+              process.env.EXPO_PUBLIC_PROXY_BASE_URL ||
+              (require('expo-constants').default.expoConfig?.extra
+                ?.proxyBaseUrl as string) ||
+              'http://localhost:3001';
+            await fetch(`${proxyBase}/api/spotify/auth/exchange`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                code,
+                codeVerifier: verifier,
+                redirectUri,
+              }),
+            });
+          }
+        }
+      }
+    } catch (e) {
+      // swallow for now
     }
   };
 
@@ -82,8 +182,13 @@ export default function SettingsScreen() {
                 <Switch
                   value={autoConnect}
                   onValueChange={setAutoConnect}
-                  trackColor={{ false: Colors.backgroundLight, true: Colors.primaryDark }}
-                  thumbColor={autoConnect ? Colors.primary : Colors.textSecondary}
+                  trackColor={{
+                    false: Colors.backgroundLight,
+                    true: Colors.primaryDark,
+                  }}
+                  thumbColor={
+                    autoConnect ? Colors.primary : Colors.textSecondary
+                  }
                 />
               </View>
             </View>
@@ -100,9 +205,21 @@ export default function SettingsScreen() {
               <Text style={styles.aboutTitle}>OBS Scene Controller</Text>
               <Text style={styles.aboutVersion}>Version 1.0.0</Text>
               <Text style={styles.aboutDescription}>
-                A minimalist application for controlling OBS scenes remotely through the WebSocket API.
+                A minimalist application for controlling OBS scenes remotely
+                through the WebSocket API.
               </Text>
             </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>SPOTIFY</Text>
+            <TouchableOpacity
+              style={styles.saveButton}
+              onPress={handleSpotifyConnect}
+            >
+              <MaterialIcons name="link" size={20} color={Colors.text} />
+              <Text style={styles.saveButtonText}>Connect Spotify</Text>
+            </TouchableOpacity>
           </View>
         </ScrollView>
       </View>
