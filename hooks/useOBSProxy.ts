@@ -42,6 +42,14 @@ interface ChatConnectionStatus {
   error?: string | null;
 }
 
+// Song queue types
+interface SongQueueItem {
+  id: string;
+  title: string;
+  requestedBy: string;
+  requestedAt: number;
+}
+
 // Storage keys
 const STORAGE_KEY_URL = 'obs_websocket_url';
 const STORAGE_KEY_PASSWORD = 'obs_websocket_password';
@@ -87,7 +95,13 @@ export const useOBSProxy = () => {
 
   // Chat state
   const [chatMessages, setChatMessages] = useState<ChatMessageItem[]>([]);
-  const [chatStatus, setChatStatus] = useState<ChatConnectionStatus | null>(null);
+  const [chatStatus, setChatStatus] = useState<ChatConnectionStatus | null>(
+    null
+  );
+  // Song queue state
+  const [songQueue, setSongQueue] = useState<SongQueueItem[]>([]);
+  const [songQueueError, setSongQueueError] = useState<string | null>(null);
+  const [isQueueActionLoading, setIsQueueActionLoading] = useState(false);
 
   // Reconnection timer
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -200,6 +214,11 @@ export const useOBSProxy = () => {
             case 'chatMessage': {
               const message: ChatMessageItem | undefined = msg?.data;
               if (message && typeof message.text === 'string') {
+                // Filter out command messages starting with '!'
+                const trimmed = message.text.trim();
+                if (trimmed.startsWith('!')) {
+                  break;
+                }
                 setChatMessages((prev) => {
                   const next = [...prev, message];
                   return next.length > 200 ? next.slice(-200) : next;
@@ -223,6 +242,14 @@ export const useOBSProxy = () => {
             }
             case 'chatSentMessage': {
               // Optionally reflect sent messages; skip for now or append as self if desired
+              break;
+            }
+            case 'songQueueUpdated': {
+              const queue: SongQueueItem[] | undefined = msg?.data?.queue;
+              if (Array.isArray(queue)) {
+                // Ensure we only keep up to 10 as per backend capacity
+                setSongQueue(queue.slice(0, 10));
+              }
               break;
             }
             default:
@@ -320,6 +347,28 @@ export const useOBSProxy = () => {
           stack: error.stack,
         });
       }
+    }
+  }, []);
+
+  const fetchSongQueue = useCallback(async () => {
+    try {
+      setSongQueueError(null);
+      const response = await fetch(`${PROXY_BASE_URL}/api/song-queue`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `HTTP error! status: ${response.status}, body: ${errorText}`
+        );
+      }
+      const data = await response.json();
+      const queue: SongQueueItem[] = Array.isArray(data?.queue)
+        ? data.queue
+        : [];
+      setSongQueue(queue.slice(0, 10));
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setSongQueueError(message);
+      console.error('Failed to fetch song queue:', message);
     }
   }, []);
 
@@ -468,6 +517,8 @@ export const useOBSProxy = () => {
         await fetchCurrentScene();
         console.log('Fetching initial mic status...');
         await fetchMicStatus();
+        console.log('Fetching initial song queue...');
+        await fetchSongQueue();
       } catch (error) {
         console.error('Error fetching initial data:', error);
         // Don't disconnect on fetch error, just log it
@@ -676,6 +727,52 @@ export const useOBSProxy = () => {
     [isConnected, fetchCurrentScene]
   );
 
+  const removeSong = useCallback(async (index1Based: number) => {
+    if (!Number.isFinite(index1Based) || index1Based < 1) return;
+    setIsQueueActionLoading(true);
+    setSongQueueError(null);
+    try {
+      const response = await fetch(
+        `${PROXY_BASE_URL}/api/song-queue/${index1Based}`,
+        {
+          method: 'DELETE',
+        }
+      );
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Remove failed: ${response.status} ${errorText}`);
+      }
+      // No need to manually update; WS will broadcast update
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setSongQueueError(message);
+      console.error('Failed to remove song:', message);
+    } finally {
+      setIsQueueActionLoading(false);
+    }
+  }, []);
+
+  const skipSong = useCallback(async () => {
+    setIsQueueActionLoading(true);
+    setSongQueueError(null);
+    try {
+      const response = await fetch(`${PROXY_BASE_URL}/api/song-queue/skip`, {
+        method: 'POST',
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Skip failed: ${response.status} ${errorText}`);
+      }
+      // WS will broadcast update
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setSongQueueError(message);
+      console.error('Failed to skip song:', message);
+    } finally {
+      setIsQueueActionLoading(false);
+    }
+  }, []);
+
   // Helper function to get error message
   const getErrorMessage = (error: any): string => {
     if (error instanceof Error) {
@@ -708,6 +805,11 @@ export const useOBSProxy = () => {
     micError,
     chatMessages,
     chatStatus,
+    songQueue,
+    songQueueError,
+    isQueueActionLoading,
+    removeSong,
+    skipSong,
     showPasswordPrompt,
     setShowPasswordPrompt,
     passwordPromptError,

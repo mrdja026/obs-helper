@@ -1,10 +1,11 @@
+import ChatMessageItem from '@/components/ChatMessageItem';
 import ConnectionStatus from '@/components/ConnectionStatus';
 import Header from '@/components/Header';
 import SceneButton from '@/components/SceneButton';
-import ChatMessageItem from '@/components/ChatMessageItem';
 import { useOBSProxy } from '@/hooks/useOBSProxy';
+import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import React from 'react';
+import React, { useRef } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -37,7 +38,14 @@ export default function ScenesScreen() {
     micError,
     chatMessages,
     chatStatus,
+    songQueue,
+    songQueueError,
+    isQueueActionLoading,
+    removeSong,
+    skipSong,
   } = useOBSProxy();
+
+  const flatListRef = useRef<FlatList<any> | null>(null);
 
   const handleNatural1 = async () => {
     if (isConnected) {
@@ -58,8 +66,15 @@ export default function ScenesScreen() {
       <StatusBar style="light" />
       <Header title="OBS Scene Control" />
 
-      <View style={[styles.responsiveRow, isLandscape ? styles.row : styles.column]}>
-        <View style={[styles.primaryPanel, isLandscape ? styles.primaryLandscape : styles.primaryPortrait]}>
+      <View
+        style={[styles.responsiveRow, isLandscape ? styles.row : styles.column]}
+      >
+        <View
+          style={[
+            styles.primaryPanel,
+            isLandscape ? styles.primaryLandscape : styles.primaryPortrait,
+          ]}
+        >
           <ConnectionStatus
             isConnected={isConnected}
             isConnecting={isConnecting}
@@ -68,7 +83,9 @@ export default function ScenesScreen() {
             onConnect={connect}
             onDisconnect={disconnect}
           />
-          <Text style={[styles.sectionTitle, styles.scenesTitle]}>AVAILABLE SCENES</Text>
+          <Text style={[styles.sectionTitle, styles.scenesTitle]}>
+            AVAILABLE SCENES
+          </Text>
           <ScrollView
             style={styles.sceneList}
             contentContainerStyle={styles.sceneListContent}
@@ -88,7 +105,9 @@ export default function ScenesScreen() {
               <View style={styles.emptyState}>
                 <Text style={styles.emptyStateText}>
                   No scenes available.{'\n'}
-                  {isConnected ? 'Try refreshing the connection.' : 'Connect to OBS to see scenes.'}
+                  {isConnected
+                    ? 'Try refreshing the connection.'
+                    : 'Connect to OBS to see scenes.'}
                 </Text>
               </View>
             )}
@@ -96,7 +115,9 @@ export default function ScenesScreen() {
 
           <View style={styles.sectionDivider} />
 
-          <Text style={[styles.sectionTitle, styles.audioTitle]}>AUDIO CONTROLS</Text>
+          <Text style={[styles.sectionTitle, styles.audioTitle]}>
+            AUDIO CONTROLS
+          </Text>
           <TouchableOpacity
             style={[
               styles.micButton,
@@ -119,35 +140,155 @@ export default function ScenesScreen() {
               </Text>
             )}
           </TouchableOpacity>
-          {micError ? <Text style={styles.micErrorText}>{micError}</Text> : null}
+          {micError ? (
+            <Text style={styles.micErrorText}>{micError}</Text>
+          ) : null}
         </View>
 
-        <View style={[styles.chatPanel, isLandscape ? styles.chatLandscape : styles.chatPortrait]}>
-          <Text style={[styles.sectionTitle, styles.chatTitle]}>CHAT</Text>
-          {chatStatus && (
-            <Text style={styles.chatStatus}>
-              {chatStatus.connected ? 'Connected' : 'Disconnected'}
-              {chatStatus.channel ? ` · #${chatStatus.channel}` : ''}
-            </Text>
-          )}
-          <FlatList
-            data={chatMessages}
-            keyExtractor={(item) => item.id || `${item.timestamp}-${item.user?.username}`}
-            renderItem={({ item }) => (
-              <ChatMessageItem
-                id={item.id}
-                text={item.text}
-                channel={item.channel}
-                user={item.user}
-                timestamp={item.timestamp}
-                isAction={item.isAction}
-                isHighlighted={item.isHighlighted}
-              />
+        <View
+          style={[
+            styles.chatPanel,
+            isLandscape ? styles.chatLandscape : styles.chatPortrait,
+          ]}
+        >
+          {/* Top half: Chat */}
+          <View style={styles.halfPanel}>
+            <Text style={[styles.sectionTitle, styles.chatTitle]}>CHAT</Text>
+            {chatStatus && (
+              <Text style={styles.chatStatus}>
+                {chatStatus.connected ? 'Connected' : 'Disconnected'}
+                {chatStatus.channel ? ` · #${chatStatus.channel}` : ''}
+              </Text>
             )}
-            contentContainerStyle={styles.chatListContent}
-            style={styles.chatList}
-            showsVerticalScrollIndicator={false}
-          />
+            <FlatList
+              data={chatMessages}
+              keyExtractor={(item) =>
+                item.id || `${item.timestamp}-${item.user?.username}`
+              }
+              renderItem={({ item }) => (
+                <ChatMessageItem
+                  id={item.id}
+                  text={item.text}
+                  channel={item.channel}
+                  user={item.user}
+                  timestamp={item.timestamp}
+                  isAction={item.isAction}
+                  isHighlighted={item.isHighlighted}
+                />
+              )}
+              contentContainerStyle={styles.chatListContent}
+              style={styles.chatList}
+              showsVerticalScrollIndicator={false}
+              onContentSizeChange={() => {
+                try {
+                  // Auto-scroll to last message
+                  flatListRef?.current?.scrollToEnd({ animated: true });
+                } catch {}
+              }}
+              ref={flatListRef}
+            />
+          </View>
+
+          {/* Bottom half: Queue */}
+          <View style={styles.halfPanel}>
+            <View style={styles.queueHeaderRow}>
+              <Text style={[styles.sectionTitle, styles.queueTitle]}>
+                QUEUE
+              </Text>
+              <Text style={styles.queueSubTitle}>capacity 10</Text>
+              <TouchableOpacity
+                style={[
+                  styles.skipButton,
+                  !songQueue || songQueue.length === 0 || isQueueActionLoading
+                    ? styles.actionDisabled
+                    : null,
+                ]}
+                onPress={skipSong}
+                disabled={
+                  !songQueue || songQueue.length === 0 || isQueueActionLoading
+                }
+                activeOpacity={0.7}
+              >
+                {isQueueActionLoading ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <>
+                    <MaterialIcons name="skip-next" size={16} color="#FFFFFF" />
+                    <Text style={styles.skipButtonText}>Skip current</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+            {songQueueError ? (
+              <Text style={styles.queueError}>{songQueueError}</Text>
+            ) : null}
+            <ScrollView
+              style={styles.queueList}
+              contentContainerStyle={styles.queueListContent}
+            >
+              {!songQueue || songQueue.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyStateText}>Queue is empty</Text>
+                </View>
+              ) : (
+                songQueue.slice(0, 10).map((item, idx) => (
+                  <View
+                    key={item.id}
+                    style={[
+                      styles.queueRow,
+                      idx === 0 ? styles.queueRowFirst : null,
+                    ]}
+                  >
+                    <Text style={styles.queueIndex}>{idx + 1}.</Text>
+                    <View style={styles.queueMain}>
+                      <Text style={styles.queueTitleText} numberOfLines={1}>
+                        {item.title}
+                      </Text>
+                      <Text style={styles.queueByText} numberOfLines={1}>
+                        by {item.requestedBy}
+                      </Text>
+                    </View>
+                    <View style={styles.queueActions}>
+                      <TouchableOpacity
+                        style={[
+                          styles.removeButton,
+                          isQueueActionLoading ? styles.actionDisabled : null,
+                        ]}
+                        onPress={() => removeSong(idx + 1)}
+                        disabled={isQueueActionLoading}
+                        activeOpacity={0.7}
+                      >
+                        <MaterialIcons
+                          name="delete"
+                          size={16}
+                          color="#FFFFFF"
+                        />
+                        <Text style={styles.actionText}>Remove</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.rowSkipButton,
+                          idx !== 0 || isQueueActionLoading
+                            ? styles.actionDisabled
+                            : null,
+                        ]}
+                        onPress={skipSong}
+                        disabled={idx !== 0 || isQueueActionLoading}
+                        activeOpacity={0.7}
+                      >
+                        <MaterialIcons
+                          name="skip-next"
+                          size={16}
+                          color="#FFFFFF"
+                        />
+                        <Text style={styles.actionText}>Skip</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+          </View>
         </View>
       </View>
     </View>
@@ -290,6 +431,10 @@ const styles = StyleSheet.create({
   chatPortrait: {
     marginTop: 24,
   },
+  halfPanel: {
+    flex: 1,
+    paddingBottom: 8,
+  },
   chatTitle: {
     marginTop: 8,
   },
@@ -305,5 +450,113 @@ const styles = StyleSheet.create({
   chatListContent: {
     gap: 8,
     paddingBottom: 16,
+  },
+  queueHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  queueTitle: {},
+  queueSubTitle: {
+    fontFamily: 'Roboto-Regular',
+    fontSize: 12,
+    color: '#B0B0B0',
+    flex: 1,
+  },
+  skipButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 4,
+    backgroundColor: '#3A3A3A',
+    gap: 6,
+  },
+  skipButtonText: {
+    fontFamily: 'Roboto-Medium',
+    color: '#FFFFFF',
+    fontSize: 12,
+  },
+  queueError: {
+    fontFamily: 'Roboto-Medium',
+    fontSize: 12,
+    color: '#FF6B6B',
+    marginBottom: 6,
+  },
+  queueList: {
+    flex: 1,
+  },
+  queueListContent: {
+    gap: 8,
+    paddingBottom: 12,
+  },
+  queueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#1D1D1D',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2C2C2C',
+  },
+  queueRowFirst: {
+    borderColor: '#03DAC6',
+    backgroundColor: 'rgba(3, 218, 198, 0.08)',
+  },
+  queueIndex: {
+    width: 22,
+    fontFamily: 'Orbitron-Bold',
+    fontSize: 14,
+    color: '#B0B0B0',
+  },
+  queueMain: {
+    flex: 1,
+    paddingHorizontal: 8,
+  },
+  queueTitleText: {
+    fontFamily: 'Roboto-Medium',
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
+  queueByText: {
+    fontFamily: 'Roboto-Regular',
+    fontSize: 12,
+    color: '#B0B0B0',
+    marginTop: 2,
+  },
+  queueActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  removeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 4,
+    backgroundColor: '#8A2B2B',
+  },
+  rowSkipButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 4,
+    backgroundColor: '#2B5F8A',
+  },
+  actionText: {
+    fontFamily: 'Roboto-Medium',
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+  actionDisabled: {
+    opacity: 0.5,
   },
 });
