@@ -124,6 +124,17 @@ export const useOBSProxy = () => {
   const [songQueueError, setSongQueueError] = useState<string | null>(null);
   const [isQueueActionLoading, setIsQueueActionLoading] = useState(false);
 
+  // Spotify playback polling state
+  const [nowPlaying, setNowPlaying] = useState<{
+    name: string;
+    uri: string;
+    artists: string[];
+    durationMs: number | null;
+  } | null>(null);
+  const [progressMs, setProgressMs] = useState<number | null>(null);
+  const [remainingMs, setRemainingMs] = useState<number | null>(null);
+  const [hiddenItemId, setHiddenItemId] = useState<string | null>(null);
+
   // Reconnection timer
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Polling timer for current scene
@@ -190,6 +201,73 @@ export const useOBSProxy = () => {
       }
     };
   }, []);
+
+  // Poll Spotify playback progress every 2s and derive remaining time
+  useEffect(() => {
+    const POLL_INTERVAL_MS = 2000;
+    const END_GRACE_MS = 1500;
+    let isMounted = true;
+    let failureCount = 0;
+
+    const tick = async () => {
+      try {
+        const response = await fetch(`${PROXY_BASE_URL}/api/spotify/debug`);
+        if (!response.ok) throw new Error(`debug ${response.status}`);
+        const data = await response.json();
+        const playback = data?.playback || null;
+        const item = playback?.item || null;
+        const progress =
+          typeof playback?.progressMs === 'number' ? playback.progressMs : null;
+        const duration =
+          typeof item?.durationMs === 'number' ? item.durationMs : null;
+
+        if (!isMounted) return;
+
+        if (!item || duration === null || progress === null) {
+          setProgressMs(null);
+          setRemainingMs(null);
+          setHiddenItemId(null);
+          failureCount = 0;
+          return;
+        }
+
+        const rem = Math.max(0, duration - progress);
+        setNowPlaying({
+          name: typeof item.name === 'string' ? item.name : 'Unknown',
+          uri: typeof item.uri === 'string' ? item.uri : '',
+          artists: Array.isArray(item.artists) ? item.artists : [],
+          durationMs: duration,
+        });
+        setProgressMs(progress);
+        setRemainingMs(rem);
+
+        const head = Array.isArray(songQueue) ? songQueue[0] : undefined;
+        const headUri = head?.spotify?.uri;
+        const matchesHead = !!headUri && headUri === item.uri;
+        setHiddenItemId(
+          matchesHead && rem <= END_GRACE_MS ? head?.id ?? null : null
+        );
+
+        failureCount = 0;
+      } catch {
+        if (!isMounted) return;
+        failureCount += 1;
+        if (failureCount > 3) {
+          setNowPlaying(null);
+          setProgressMs(null);
+          setRemainingMs(null);
+          setHiddenItemId(null);
+        }
+      }
+    };
+
+    const timer = setInterval(tick, POLL_INTERVAL_MS);
+    void tick();
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, [songQueue]);
   const connectWebSocket = useCallback(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       // Web uses secure WS via the HTTPS proxy at /ws
@@ -883,6 +961,9 @@ export const useOBSProxy = () => {
     removeSong,
     skipSong,
     playSong,
+    nowPlaying,
+    remainingMs,
+    hiddenItemId,
     showPasswordPrompt,
     setShowPasswordPrompt,
     passwordPromptError,

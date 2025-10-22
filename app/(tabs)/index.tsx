@@ -45,6 +45,9 @@ export default function ScenesScreen() {
     removeSong,
     skipSong,
     playSong,
+    nowPlaying,
+    remainingMs,
+    hiddenItemId,
   } = useOBSProxy();
 
   const flatListRef = useRef<FlatList<any> | null>(null);
@@ -167,6 +170,15 @@ export default function ScenesScreen() {
 
           <View style={styles.sectionDivider} />
 
+          {/* Spotify playback header */}
+          {nowPlaying && typeof remainingMs === 'number' && (
+            <View style={styles.spotifyHeader}>
+              <Text style={styles.spotifyHeaderText} numberOfLines={1}>
+                {nowPlaying.name} · {formatRemaining(remainingMs)}
+              </Text>
+            </View>
+          )}
+
           <Text style={[styles.sectionTitle, styles.audioTitle]}>
             AUDIO CONTROLS
           </Text>
@@ -283,97 +295,104 @@ export default function ScenesScreen() {
                   <Text style={styles.emptyStateText}>Queue is empty</Text>
                 </View>
               ) : (
-                songQueue.slice(0, 10).map((item, idx) => (
-                  <View
-                    key={item.id}
-                    style={[
-                      styles.queueRow,
-                      idx === 0 ? styles.queueRowFirst : null,
-                    ]}
-                  >
-                    <Text style={styles.queueIndex}>{idx + 1}.</Text>
-                    <View style={styles.queueMain}>
-                      <Text style={styles.queueTitleText} numberOfLines={1}>
-                        {item.title}
-                      </Text>
-                      <Text style={styles.queueByText} numberOfLines={1}>
-                        by {item.requestedBy}
-                      </Text>
-                    </View>
-                    <View style={styles.queueActions}>
-                      {item.matchStatus === 'matched' ? (
-                        <Text style={{ color: '#03DAC6', marginRight: 8 }}>
-                          ✓
+                (hiddenItemId
+                  ? songQueue.filter((i) => i.id !== hiddenItemId)
+                  : songQueue
+                )
+                  .slice(0, 10)
+                  .map((item, idx) => (
+                    <View
+                      key={item.id}
+                      style={[
+                        styles.queueRow,
+                        idx === 0 ? styles.queueRowFirst : null,
+                      ]}
+                    >
+                      <Text style={styles.queueIndex}>{idx + 1}.</Text>
+                      <View style={styles.queueMain}>
+                        <Text style={styles.queueTitleText} numberOfLines={1}>
+                          {item.title}
                         </Text>
-                      ) : item.matchStatus === 'pending' ? (
-                        <Text style={{ color: '#B0B0B0', marginRight: 8 }}>
-                          …
+                        <Text style={styles.queueByText} numberOfLines={1}>
+                          by {item.requestedBy}
                         </Text>
-                      ) : item.matchStatus === 'error' ? (
-                        <MaterialIcons
-                          name="error-outline"
-                          size={16}
-                          color="#FF6B6B"
-                          style={{ marginRight: 8 }}
-                        />
-                      ) : null}
-                      <TouchableOpacity
-                        style={[
-                          styles.removeButton,
-                          isQueueActionLoading ? styles.actionDisabled : null,
-                        ]}
-                        onPress={() => removeSong(idx + 1)}
-                        disabled={isQueueActionLoading}
-                        activeOpacity={0.7}
-                      >
-                        <MaterialIcons
-                          name="delete"
-                          size={16}
-                          color="#FFFFFF"
-                        />
-                        <Text style={styles.actionText}>Remove</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[
-                          styles.rowSkipButton,
-                          item.matchStatus !== 'matched' || isQueueActionLoading
-                            ? styles.actionDisabled
-                            : null,
-                        ]}
-                        onPress={() => void playSong(item.id)}
-                        disabled={
-                          item.matchStatus !== 'matched' || isQueueActionLoading
-                        }
-                        activeOpacity={0.7}
-                      >
-                        <MaterialIcons
-                          name="play-arrow"
-                          size={16}
-                          color="#FFFFFF"
-                        />
-                        <Text style={styles.actionText}>Play</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[
-                          styles.rowSkipButton,
-                          idx !== 0 || isQueueActionLoading
-                            ? styles.actionDisabled
-                            : null,
-                        ]}
-                        onPress={skipSong}
-                        disabled={idx !== 0 || isQueueActionLoading}
-                        activeOpacity={0.7}
-                      >
-                        <MaterialIcons
-                          name="skip-next"
-                          size={16}
-                          color="#FFFFFF"
-                        />
-                        <Text style={styles.actionText}>Skip</Text>
-                      </TouchableOpacity>
+                      </View>
+                      <View style={styles.queueActions}>
+                        {item.matchStatus === 'matched' ? (
+                          <Text style={{ color: '#03DAC6', marginRight: 8 }}>
+                            ✓
+                          </Text>
+                        ) : item.matchStatus === 'pending' ? (
+                          <Text style={{ color: '#B0B0B0', marginRight: 8 }}>
+                            …
+                          </Text>
+                        ) : item.matchStatus === 'error' ? (
+                          <MaterialIcons
+                            name="error-outline"
+                            size={16}
+                            color="#FF6B6B"
+                            style={{ marginRight: 8 }}
+                          />
+                        ) : null}
+                        <TouchableOpacity
+                          style={[
+                            styles.removeButton,
+                            isQueueActionLoading ? styles.actionDisabled : null,
+                          ]}
+                          onPress={() => removeSong(idx + 1)}
+                          disabled={isQueueActionLoading}
+                          activeOpacity={0.7}
+                        >
+                          <MaterialIcons
+                            name="delete"
+                            size={16}
+                            color="#FFFFFF"
+                          />
+                          <Text style={styles.actionText}>Remove</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.rowSkipButton,
+                            item.matchStatus !== 'matched' ||
+                            isQueueActionLoading
+                              ? styles.actionDisabled
+                              : null,
+                          ]}
+                          onPress={() => void playSong(item.id)}
+                          disabled={
+                            item.matchStatus !== 'matched' ||
+                            isQueueActionLoading
+                          }
+                          activeOpacity={0.7}
+                        >
+                          <MaterialIcons
+                            name="play-arrow"
+                            size={16}
+                            color="#FFFFFF"
+                          />
+                          <Text style={styles.actionText}>Play</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.rowSkipButton,
+                            idx !== 0 || isQueueActionLoading
+                              ? styles.actionDisabled
+                              : null,
+                          ]}
+                          onPress={skipSong}
+                          disabled={idx !== 0 || isQueueActionLoading}
+                          activeOpacity={0.7}
+                        >
+                          <MaterialIcons
+                            name="skip-next"
+                            size={16}
+                            color="#FFFFFF"
+                          />
+                          <Text style={styles.actionText}>Skip</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                  </View>
-                ))
+                  ))
               )}
             </ScrollView>
           </View>
@@ -664,4 +683,28 @@ const styles = StyleSheet.create({
   actionDisabled: {
     opacity: 0.5,
   },
+  spotifyHeader: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: '#1D1D1D',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#2C2C2C',
+    alignSelf: 'stretch',
+    marginBottom: 8,
+  },
+  spotifyHeaderText: {
+    fontFamily: 'Roboto-Medium',
+    fontSize: 12,
+    color: '#B0B0B0',
+  },
 });
+
+function formatRemaining(ms?: number | null): string {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return '0:00';
+  const totalSeconds = Math.floor(ms / 1000);
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  const ss = s < 10 ? `0${s}` : `${s}`;
+  return `${m}:${ss}`;
+}
