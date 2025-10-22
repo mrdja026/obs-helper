@@ -65,10 +65,22 @@ const STORAGE_KEY_PASSWORD = 'obs_websocket_password';
 const STORAGE_KEY_AUTO_CONNECT = 'obs_websocket_auto_connect';
 const STORAGE_KEY_PASSWORD_PROMPTED = 'obs_websocket_password_prompted';
 
-// Backend proxy configuration from environment
+// Backend proxy configuration
+// - On web, use same-origin ('') to avoid mixed-content; proxy handles /api
+// - On native, use configured LAN/localhost proxyBaseUrl
 const PROXY_BASE_URL =
-  Constants.expoConfig?.extra?.proxyBaseUrl || 'http://localhost:3001';
-const PROXY_WS_URL = PROXY_BASE_URL.replace('http', 'ws');
+  Platform.OS === 'web'
+    ? ''
+    : Constants.expoConfig?.extra?.proxyBaseUrl || 'http://localhost:3001';
+const PROXY_WS_URL =
+  Platform.OS === 'web'
+    ? typeof window !== 'undefined'
+      ? window.location.protocol.replace('http', 'ws') +
+        '//' +
+        window.location.host +
+        '/ws'
+      : 'ws://127.0.0.1:8443/ws'
+    : PROXY_BASE_URL.replace('http', 'ws');
 const PROXY_WS_TOKEN: string | undefined = (Constants.expoConfig as any)?.extra
   ?.proxyWsToken;
 const DEFAULT_OBS_URL =
@@ -179,6 +191,9 @@ export const useOBSProxy = () => {
     };
   }, []);
   const connectWebSocket = useCallback(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      // Web uses secure WS via the HTTPS proxy at /ws
+    }
     try {
       const wsUrl = PROXY_WS_TOKEN
         ? `${PROXY_WS_URL}?token=${encodeURIComponent(PROXY_WS_TOKEN)}`
@@ -789,6 +804,47 @@ export const useOBSProxy = () => {
     }
   }, []);
 
+  const playSong = useCallback(async (itemId: string) => {
+    if (!itemId) return false;
+    setIsQueueActionLoading(true);
+    setSongQueueError(null);
+    try {
+      const response = await fetch(`${PROXY_BASE_URL}/api/spotify/queue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId }),
+      });
+
+      if (response.status === 409) {
+        let body: any = null;
+        try {
+          body = await response.json();
+        } catch {}
+        if (body?.error === 'no_active_device') {
+          setSongQueueError('Open Spotify on any device and try again.');
+        } else if (body?.error === 'not_matched') {
+          setSongQueueError('Song is not matched yet.');
+        } else {
+          setSongQueueError('Playback not possible right now.');
+        }
+        return false;
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Play failed: ${response.status} ${errorText}`);
+      }
+
+      return true;
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setSongQueueError(message);
+      return false;
+    } finally {
+      setIsQueueActionLoading(false);
+    }
+  }, []);
+
   // Helper function to get error message
   const getErrorMessage = (error: any): string => {
     if (error instanceof Error) {
@@ -826,6 +882,7 @@ export const useOBSProxy = () => {
     isQueueActionLoading,
     removeSong,
     skipSong,
+    playSong,
     showPasswordPrompt,
     setShowPasswordPrompt,
     passwordPromptError,

@@ -81,76 +81,89 @@ const proxy = httpProxy.createProxyServer({
   changeOrigin: true,
 });
 
-https
-  .createServer({ key, cert }, (req, res) => {
-    // Serve a lightweight /oauthredirect handler to post the code back to opener
-    if (req.url && req.url.startsWith(OAUTH_REDIRECT_PATH)) {
-      const backendBase = process.env.PROXY_BASE_URL || BACKEND;
-      const html = [
-        '<!doctype html><html><body style="background:#121212;color:#eee;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;">',
-        '<script>(function(){',
-        // Post to same-origin /api so we avoid mixed-content/CORS
-        'try{',
-        'var params=new URLSearchParams(window.location.search);',
-        'var code=params.get("code");',
-        'var v=null;try{v=sessionStorage.getItem("spotify_pkce_verifier")||localStorage.getItem("spotify_pkce_verifier");}catch(e){}',
-        'var r=null;try{r=sessionStorage.getItem("spotify_redirect_uri")||localStorage.getItem("spotify_redirect_uri");}catch(e){}',
-        'var ru=r || (window.location.origin+window.location.pathname);',
-        'if(code&&v){',
-        'fetch("/api/spotify/auth/exchange",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code:code,codeVerifier:v,redirectUri:ru})}).then(async function(r){',
-        ' if(r && r.ok){',
-        '   document.body.innerHTML="<div style=\\"color:#8BC34A;font-family:system-ui;\\">Spotify connected. You can close this tab.</div>";',
-        '   try{sessionStorage.removeItem("spotify_pkce_verifier");sessionStorage.removeItem("spotify_redirect_uri");}catch(e){}',
-        ' }else{',
-        '   var t="";try{t=await r.text()}catch(e){}',
-        '   document.body.innerHTML="<pre style=\\"white-space:pre-wrap;color:#FF6B6B;font-family:system-ui;\\">Exchange failed\\n"+t+"</pre>";',
-        ' }',
-        '}).catch(function(e){document.body.innerHTML="<pre style=\\"white-space:pre-wrap;color:#FF6B6B;font-family:system-ui;\\">Exchange error: "+(e&&e.message?e.message:"unknown")+"</pre>";});',
-        '}else{document.body.innerHTML="<div style=\\"color:#FF6B6B;\\">Missing code or verifier.</div>";}',
-        '}catch(e){document.body.textContent="Unexpected error";}',
-        '}());</script></body></html>',
-      ].join('');
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(html);
+const server = https.createServer({ key, cert }, (req, res) => {
+  // Serve a lightweight /oauthredirect handler to post the code back to opener
+  if (req.url && req.url.startsWith(OAUTH_REDIRECT_PATH)) {
+    const backendBase = process.env.PROXY_BASE_URL || BACKEND;
+    const html = [
+      '<!doctype html><html><body style="background:#121212;color:#eee;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;">',
+      '<script>(function(){',
+      // Post to same-origin /api so we avoid mixed-content/CORS
+      'try{',
+      'var params=new URLSearchParams(window.location.search);',
+      'var code=params.get("code");',
+      'var v=null;try{v=sessionStorage.getItem("spotify_pkce_verifier")||localStorage.getItem("spotify_pkce_verifier");}catch(e){}',
+      'var r=null;try{r=sessionStorage.getItem("spotify_redirect_uri")||localStorage.getItem("spotify_redirect_uri");}catch(e){}',
+      'var ru=r || (window.location.origin+window.location.pathname);',
+      'if(code&&v){',
+      'fetch("/api/spotify/auth/exchange",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code:code,codeVerifier:v,redirectUri:ru})}).then(async function(r){',
+      ' if(r && r.ok){',
+      '   document.body.innerHTML="<div style=\\"color:#8BC34A;font-family:system-ui;\\">Spotify connected. You can close this tab.</div>";',
+      '   try{sessionStorage.removeItem("spotify_pkce_verifier");sessionStorage.removeItem("spotify_redirect_uri");}catch(e){}',
+      ' }else{',
+      '   var t="";try{t=await r.text()}catch(e){}',
+      '   document.body.innerHTML="<pre style=\\"white-space:pre-wrap;color:#FF6B6B;font-family:system-ui;\\">Exchange failed\\n"+t+"</pre>";',
+      ' }',
+      '}).catch(function(e){document.body.innerHTML="<pre style=\\"white-space:pre-wrap;color:#FF6B6B;font-family:system-ui;\\">Exchange error: "+(e&&e.message?e.message:"unknown")+"</pre>";});',
+      '}else{document.body.innerHTML="<div style=\\"color:#FF6B6B;\\">Missing code or verifier.</div>";}',
+      '}catch(e){document.body.textContent="Unexpected error";}',
+      '}());</script></body></html>',
+    ].join('');
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(html);
+    return;
+  }
+  // Route /api/* to backend; everything else to Expo web target
+  if (req.url && req.url.startsWith('/api/')) {
+    proxy.web(req, res, { target: BACKEND, changeOrigin: true }, (err) => {
+      try {
+        const targetInfo = (() => {
+          try {
+            const u = new URL(BACKEND);
+            return `${u.protocol}//${u.hostname}:${u.port}`;
+          } catch {
+            return BACKEND;
+          }
+        })();
+        console.error('API proxy error', {
+          target: targetInfo,
+          code: err && err.code,
+          message: err && err.message,
+        });
+      } catch {}
+      res.writeHead(502);
+      res.end('Proxy error to backend');
+    });
+  } else {
+    proxy.web(req, res, { target: TARGET, changeOrigin: true }, (err) => {
+      try {
+        console.error('Web proxy error', {
+          target: TARGET,
+          code: err && err.code,
+          message: err && err.message,
+        });
+      } catch {}
+      res.writeHead(502);
+      res.end('Proxy error to web target');
+    });
+  }
+});
+
+// Proxy WebSocket upgrades to backend (secure ws over same origin)
+server.on('upgrade', function (req, socket, head) {
+  try {
+    const url = new URL(req.url, `https://127.0.0.1:${HTTPS_PORT}`);
+    if (url.pathname === '/ws') {
+      // Forward to backend WS (convert http->ws)
+      proxy.ws(req, socket, head, { target: BACKEND.replace('http', 'ws') });
       return;
     }
-    // Route /api/* to backend; everything else to Expo web target
-    if (req.url && req.url.startsWith('/api/')) {
-      proxy.web(req, res, { target: BACKEND, changeOrigin: true }, (err) => {
-        try {
-          const targetInfo = (() => {
-            try {
-              const u = new URL(BACKEND);
-              return `${u.protocol}//${u.hostname}:${u.port}`;
-            } catch {
-              return BACKEND;
-            }
-          })();
-          console.error('API proxy error', {
-            target: targetInfo,
-            code: err && err.code,
-            message: err && err.message,
-          });
-        } catch {}
-        res.writeHead(502);
-        res.end('Proxy error to backend');
-      });
-    } else {
-      proxy.web(req, res, { target: TARGET, changeOrigin: true }, (err) => {
-        try {
-          console.error('Web proxy error', {
-            target: TARGET,
-            code: err && err.code,
-            message: err && err.message,
-          });
-        } catch {}
-        res.writeHead(502);
-        res.end('Proxy error to web target');
-      });
-    }
-  })
-  .listen(HTTPS_PORT, '127.0.0.1', () => {
-    console.log(
-      `HTTPS proxy on https://127.0.0.1:${HTTPS_PORT} -> TARGET=${TARGET} BACKEND=${BACKEND}`
-    );
-  });
+  } catch {}
+  proxy.ws(req, socket, head, { target: BACKEND.replace('http', 'ws') });
+});
+
+server.listen(HTTPS_PORT, '127.0.0.1', () => {
+  console.log(
+    `HTTPS proxy on https://127.0.0.1:${HTTPS_PORT} -> TARGET=${TARGET} BACKEND=${BACKEND}`
+  );
+});

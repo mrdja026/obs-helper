@@ -5,10 +5,11 @@ import SceneButton from '@/components/SceneButton';
 import { useOBSProxy } from '@/hooks/useOBSProxy';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -43,9 +44,45 @@ export default function ScenesScreen() {
     isQueueActionLoading,
     removeSong,
     skipSong,
+    playSong,
   } = useOBSProxy();
 
   const flatListRef = useRef<FlatList<any> | null>(null);
+
+  const [spotifyStatus, setSpotifyStatus] = useState<{
+    authenticated: boolean;
+    hasRefresh?: boolean;
+    expiresAt?: string | null;
+  } | null>(null);
+
+  const getProxyBase = () => {
+    if (Platform.OS === 'web') return '';
+    try {
+      const Constants = require('expo-constants').default;
+      return (
+        process.env.EXPO_PUBLIC_PROXY_BASE_URL ||
+        (Constants.expoConfig?.extra?.proxyBaseUrl as string) ||
+        'http://localhost:3001'
+      );
+    } catch {
+      return process.env.EXPO_PUBLIC_PROXY_BASE_URL || 'http://localhost:3001';
+    }
+  };
+
+  const loadSpotifyStatus = async () => {
+    try {
+      const base = getProxyBase();
+      const res = await fetch(`${base}/api/spotify/status`);
+      const data = await res.json();
+      setSpotifyStatus(data);
+    } catch {
+      setSpotifyStatus({ authenticated: false });
+    }
+  };
+
+  useEffect(() => {
+    loadSpotifyStatus();
+  }, []);
 
   const handleNatural1 = async () => {
     if (isConnected) {
@@ -75,6 +112,21 @@ export default function ScenesScreen() {
             isLandscape ? styles.primaryLandscape : styles.primaryPortrait,
           ]}
         >
+          {/* Spotify connection indicator */}
+          <View style={styles.spotifyStatusRow}>
+            <MaterialIcons
+              name="music-note"
+              size={16}
+              color={spotifyStatus?.authenticated ? '#4CAF50' : '#F44336'}
+              style={{ marginRight: 8 }}
+            />
+            <Text style={styles.spotifyStatusText}>
+              {spotifyStatus?.authenticated
+                ? 'Spotify Connected'
+                : 'Spotify Not Connected'}
+            </Text>
+          </View>
+
           <ConnectionStatus
             isConnected={isConnected}
             isConnecting={isConnecting}
@@ -250,11 +302,20 @@ export default function ScenesScreen() {
                     </View>
                     <View style={styles.queueActions}>
                       {item.matchStatus === 'matched' ? (
-                        <Text style={{ color: '#03DAC6', marginRight: 8 }}>✓</Text>
+                        <Text style={{ color: '#03DAC6', marginRight: 8 }}>
+                          ✓
+                        </Text>
                       ) : item.matchStatus === 'pending' ? (
-                        <Text style={{ color: '#B0B0B0', marginRight: 8 }}>…</Text>
+                        <Text style={{ color: '#B0B0B0', marginRight: 8 }}>
+                          …
+                        </Text>
                       ) : item.matchStatus === 'error' ? (
-                        <MaterialIcons name="error-outline" size={16} color="#FF6B6B" style={{ marginRight: 8 }} />
+                        <MaterialIcons
+                          name="error-outline"
+                          size={16}
+                          color="#FF6B6B"
+                          style={{ marginRight: 8 }}
+                        />
                       ) : null}
                       <TouchableOpacity
                         style={[
@@ -275,23 +336,21 @@ export default function ScenesScreen() {
                       <TouchableOpacity
                         style={[
                           styles.rowSkipButton,
-                          (item.matchStatus !== 'matched' || isQueueActionLoading)
+                          item.matchStatus !== 'matched' || isQueueActionLoading
                             ? styles.actionDisabled
                             : null,
                         ]}
-                        onPress={async () => {
-                          try {
-                            await fetch(`${process.env.EXPO_PUBLIC_PROXY_BASE_URL || 'http://localhost:3001'}/api/spotify/queue`, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ itemId: item.id }),
-                            });
-                          } catch {}
-                        }}
-                        disabled={item.matchStatus !== 'matched' || isQueueActionLoading}
+                        onPress={() => void playSong(item.id)}
+                        disabled={
+                          item.matchStatus !== 'matched' || isQueueActionLoading
+                        }
                         activeOpacity={0.7}
                       >
-                        <MaterialIcons name="play-arrow" size={16} color="#FFFFFF" />
+                        <MaterialIcons
+                          name="play-arrow"
+                          size={16}
+                          color="#FFFFFF"
+                        />
                         <Text style={styles.actionText}>Play</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
@@ -390,6 +449,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 16,
     marginBottom: 8,
+  },
+  spotifyStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1D1D1D',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#2C2C2C',
+    marginTop: 8,
+  },
+  spotifyStatusText: {
+    fontFamily: 'Roboto-Regular',
+    fontSize: 12,
+    color: '#B0B0B0',
   },
   effectButton: {
     flex: 1,
