@@ -337,10 +337,23 @@ export default function ScenesScreen() {
                         <TouchableOpacity
                           style={[
                             styles.removeButton,
-                            isQueueActionLoading ? styles.actionDisabled : null,
+                            isQueueActionLoading ||
+                            songQueue.findIndex((q) => q.id === item.id) === -1
+                              ? styles.actionDisabled
+                              : null,
                           ]}
-                          onPress={() => removeSong(idx + 1)}
-                          disabled={isQueueActionLoading}
+                          onPress={() => {
+                            const serverIdx = songQueue.findIndex(
+                              (q) => q.id === item.id
+                            );
+                            if (serverIdx >= 0) {
+                              removeSong(serverIdx + 1);
+                            }
+                          }}
+                          disabled={
+                            isQueueActionLoading ||
+                            songQueue.findIndex((q) => q.id === item.id) === -1
+                          }
                           activeOpacity={0.7}
                         >
                           <MaterialIcons

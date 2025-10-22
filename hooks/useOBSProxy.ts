@@ -146,6 +146,8 @@ export const useOBSProxy = () => {
   const isActuallyConnectedRef = useRef(false);
   // Ref to hold latest connect function to avoid TDZ/cycles
   const connectRef = useRef<() => Promise<void>>(async () => {});
+  // Guard to auto-skip only once per head item
+  const autoSkipHeadIdRef = useRef<string | null>(null);
 
   // Load saved connection settings
   useEffect(() => {
@@ -247,6 +249,45 @@ export const useOBSProxy = () => {
         setHiddenItemId(
           matchesHead && rem <= END_GRACE_MS ? head?.id ?? null : null
         );
+
+        // Auto-remove from server when head track finishes
+        const currentHeadId = head?.id ?? null;
+        if (matchesHead && rem <= END_GRACE_MS && currentHeadId) {
+          if (autoSkipHeadIdRef.current !== currentHeadId) {
+            try {
+              const r = await fetch(`${PROXY_BASE_URL}/api/song-queue/skip`, {
+                method: 'POST',
+              });
+              if (r.ok) {
+                autoSkipHeadIdRef.current = currentHeadId;
+                // Optimistically remove head locally to avoid flicker/mismatch
+                setSongQueue((prev) =>
+                  Array.isArray(prev) &&
+                  prev.length > 0 &&
+                  prev[0]?.id === currentHeadId
+                    ? prev.slice(1)
+                    : prev
+                );
+                setHiddenItemId(null);
+              } else {
+                const txt = await r.text().catch(() => '');
+                setSongQueueError(
+                  `Auto-skip failed: ${r.status}${txt ? ` ${txt}` : ''}`
+                );
+              }
+            } catch {}
+          }
+        } else {
+          // Reset guard when head changes or track not ending
+          if (!currentHeadId) {
+            autoSkipHeadIdRef.current = null;
+          } else if (
+            autoSkipHeadIdRef.current &&
+            autoSkipHeadIdRef.current !== currentHeadId
+          ) {
+            autoSkipHeadIdRef.current = null;
+          }
+        }
 
         failureCount = 0;
       } catch {
