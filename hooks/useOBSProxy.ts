@@ -1086,7 +1086,7 @@ export const useOBSProxy = () => {
         );
       }
 
-      const response = await fetch(`${PROXY_BASE_URL}/api/spotify/queue`, {
+      const response = await fetch(`${PROXY_BASE_URL}/api/spotify/play-now`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ itemId }),
