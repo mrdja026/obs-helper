@@ -1,7 +1,13 @@
-import React from 'react';
-import { View, StyleSheet, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
+import { MaterialIcons } from '@expo/vector-icons';
+import React from 'react';
+import {
+  ActivityIndicator,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 type ConnectionStatusProps = {
   isConnected: boolean;
@@ -10,6 +16,8 @@ type ConnectionStatusProps = {
   error: string | null;
   onConnect: () => void;
   onDisconnect: () => void;
+  syncing?: boolean;
+  needsReauth?: boolean;
 };
 
 export default function ConnectionStatus({
@@ -19,15 +27,19 @@ export default function ConnectionStatus({
   error,
   onConnect,
   onDisconnect,
+  syncing,
+  needsReauth,
 }: ConnectionStatusProps) {
   const getStatusColor = () => {
-    if (error) return Colors.error;
+    if (error || needsReauth) return Colors.error;
     if (isConnected) return Colors.success;
     return Colors.warning;
   };
 
   const getStatusText = () => {
+    if (needsReauth) return 'Needs Re-auth';
     if (error) return 'Connection Error';
+    if (syncing) return 'Syncing…';
     if (isReconnecting) return 'Reconnecting...';
     if (isConnecting) return 'Connecting...';
     if (isConnected) return 'Connected';
@@ -37,20 +49,22 @@ export default function ConnectionStatus({
   return (
     <View style={styles.container}>
       <View style={[styles.statusContainer, { borderColor: getStatusColor() }]}>
-        <View style={[styles.indicator, { backgroundColor: getStatusColor() }]} />
+        <View
+          style={[styles.indicator, { backgroundColor: getStatusColor() }]}
+        />
 
         <View style={styles.statusTextContainer}>
           <Text style={styles.statusText}>{getStatusText()}</Text>
           {error && <Text style={styles.errorText}>{error}</Text>}
         </View>
 
-        {(isConnecting || isReconnecting) ? (
+        {syncing || isConnecting || isReconnecting ? (
           <ActivityIndicator size="small" color={Colors.accent} />
         ) : (
           <TouchableOpacity
             style={[
               styles.actionButton,
-              { backgroundColor: isConnected ? Colors.error : Colors.primary }
+              { backgroundColor: isConnected ? Colors.error : Colors.primary },
             ]}
             onPress={isConnected ? onDisconnect : onConnect}
           >

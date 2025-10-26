@@ -33,6 +33,7 @@ export default function ScenesScreen() {
     connectionError,
     isConnecting,
     isReconnecting,
+    authSyncing,
     toggleMic,
     isMicMuted,
     isMicLoading,
@@ -48,6 +49,10 @@ export default function ScenesScreen() {
     nowPlaying,
     remainingMs,
     hiddenItemId,
+    needsReauthKind,
+    reauthSpotify,
+    reauthTwitch,
+    clearAuthData,
   } = useOBSProxy();
 
   const flatListRef = useRef<FlatList<any> | null>(null);
@@ -135,9 +140,49 @@ export default function ScenesScreen() {
             isConnecting={isConnecting}
             isReconnecting={isReconnecting}
             error={connectionError}
+            syncing={authSyncing}
+            needsReauth={needsReauthKind !== 'none'}
             onConnect={connect}
             onDisconnect={disconnect}
           />
+          {needsReauthKind !== 'none' && (
+            <View style={styles.reauthBanner}>
+              <Text style={styles.reauthText}>
+                {needsReauthKind === 'spotify'
+                  ? 'Spotify authentication required.'
+                  : 'Twitch authentication required.'}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {needsReauthKind === 'spotify' ? (
+                  <TouchableOpacity
+                    style={styles.smallButton}
+                    onPress={reauthSpotify}
+                  >
+                    <Text style={styles.smallButtonText}>Re-auth Spotify</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.smallButton}
+                    onPress={reauthTwitch}
+                  >
+                    <Text style={styles.smallButtonText}>Re-auth Twitch</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={[styles.smallButton, { backgroundColor: '#8A2B2B' }]}
+                  onPress={() =>
+                    clearAuthData(
+                      needsReauthKind === 'spotify' ? 'spotify' : 'twitch'
+                    )
+                  }
+                >
+                  <Text style={styles.smallButtonText}>
+                    Clear tokens + local
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
           <Text style={[styles.sectionTitle, styles.scenesTitle]}>
             AVAILABLE SCENES
           </Text>
@@ -710,6 +755,35 @@ const styles = StyleSheet.create({
     fontFamily: 'Roboto-Medium',
     fontSize: 12,
     color: '#B0B0B0',
+  },
+  reauthBanner: {
+    marginTop: 8,
+    backgroundColor: '#2B2B2B',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#3A3A3A',
+    padding: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  reauthText: {
+    fontFamily: 'Roboto-Medium',
+    fontSize: 12,
+    color: '#FFB74D',
+    flex: 1,
+  },
+  smallButton: {
+    backgroundColor: '#2B5F8A',
+    borderRadius: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  smallButtonText: {
+    fontFamily: 'Roboto-Medium',
+    fontSize: 12,
+    color: '#FFFFFF',
   },
 });
 

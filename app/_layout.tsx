@@ -1,19 +1,19 @@
-import { useEffect } from 'react';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
+import { NotificationOverlay } from '@/components/NotificationOverlay';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
-import { useFonts } from 'expo-font';
-import { SplashScreen } from 'expo-router';
 import {
   Orbitron_400Regular,
   Orbitron_500Medium,
-  Orbitron_700Bold
+  Orbitron_700Bold,
 } from '@expo-google-fonts/orbitron';
 import {
   Roboto_400Regular,
   Roboto_500Medium,
-  Roboto_700Bold
+  Roboto_700Bold,
 } from '@expo-google-fonts/roboto';
+import { useFonts } from 'expo-font';
+import { SplashScreen, Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 
 // Prevent splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -49,6 +49,7 @@ export default function RootLayout() {
         <Stack.Screen name="+not-found" />
       </Stack>
       <StatusBar style="light" />
+      <NotificationOverlay />
     </>
   );
 }

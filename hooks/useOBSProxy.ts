@@ -1,5 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
+import * as Crypto from 'expo-crypto';
+import * as Linking from 'expo-linking';
+import * as Random from 'expo-random';
+import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
@@ -123,6 +127,12 @@ export const useOBSProxy = () => {
   const [songQueue, setSongQueue] = useState<SongQueueItem[]>([]);
   const [songQueueError, setSongQueueError] = useState<string | null>(null);
   const [isQueueActionLoading, setIsQueueActionLoading] = useState(false);
+
+  // Auth guard UI state
+  const [authSyncing, setAuthSyncing] = useState(false);
+  const [needsReauthKind, setNeedsReauthKind] = useState<
+    'none' | 'spotify' | 'twitch'
+  >('none');
 
   // Spotify playback polling state
   const [nowPlaying, setNowPlaying] = useState<{
@@ -309,6 +319,15 @@ export const useOBSProxy = () => {
       clearInterval(timer);
     };
   }, [songQueue]);
+
+  const getProxyBase = useCallback(() => {
+    if (Platform.OS === 'web') return '';
+    return (
+      process.env.EXPO_PUBLIC_PROXY_BASE_URL ||
+      (Constants.expoConfig?.extra?.proxyBaseUrl as string) ||
+      'http://localhost:3001'
+    );
+  }, []);
   const connectWebSocket = useCallback(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       // Web uses secure WS via the HTTPS proxy at /ws
@@ -394,6 +413,26 @@ export const useOBSProxy = () => {
                 // Ensure we only keep up to 10 as per backend capacity
                 setSongQueue(queue.slice(0, 10));
               }
+              break;
+            }
+            case 'twitchFollow': {
+              const name = msg?.data?.displayName || 'Follower';
+              try {
+                (global as any).__pushOverlayNotification?.({
+                  kind: 'follow',
+                  name,
+                });
+              } catch {}
+              break;
+            }
+            case 'twitchSubscribe': {
+              const name = msg?.data?.displayName || 'Subscriber';
+              try {
+                (global as any).__pushOverlayNotification?.({
+                  kind: 'sub',
+                  name,
+                });
+              } catch {}
               break;
             }
             default:
@@ -882,6 +921,54 @@ export const useOBSProxy = () => {
     setIsQueueActionLoading(true);
     setSongQueueError(null);
     try {
+      // Preflight Twitch status for admin-protected queue actions
+      setAuthSyncing(true);
+      try {
+        const s = await fetch(`${PROXY_BASE_URL}/api/twitch/status`);
+        const sd = await s.json().catch(() => ({}));
+        if (!sd?.authenticated) {
+          // Try bootstrap first if fallback available
+          if (sd?.method === 'token_fallback') {
+            await fetch(`${PROXY_BASE_URL}/api/twitch/auth/bootstrap`, {
+              method: 'POST',
+              credentials: 'include',
+            }).catch(() => {});
+            const s2 = await fetch(`${PROXY_BASE_URL}/api/twitch/status`);
+            const sd2 = await s2.json().catch(() => ({}));
+            if (sd2?.authenticated) {
+              // ok
+            } else {
+              await fetch(`${PROXY_BASE_URL}/api/twitch/refresh`, {
+                method: 'POST',
+              }).catch(() => {});
+              const s3 = await fetch(`${PROXY_BASE_URL}/api/twitch/status`);
+              const sd3 = await s3.json().catch(() => ({}));
+              if (!sd3?.authenticated) {
+                setNeedsReauthKind('twitch');
+                throw new Error(
+                  'Twitch not authenticated. Please re-auth and try again.'
+                );
+              }
+            }
+          } else {
+            // No session and no fallback; try refresh then re-check
+            await fetch(`${PROXY_BASE_URL}/api/twitch/refresh`, {
+              method: 'POST',
+            }).catch(() => {});
+            const s2 = await fetch(`${PROXY_BASE_URL}/api/twitch/status`);
+            const sd2 = await s2.json().catch(() => ({}));
+            if (!sd2?.authenticated) {
+              setNeedsReauthKind('twitch');
+              throw new Error(
+                'Twitch not authenticated. Please re-auth and try again.'
+              );
+            }
+          }
+        }
+      } finally {
+        setAuthSyncing(false);
+      }
+
       const response = await fetch(
         `${PROXY_BASE_URL}/api/song-queue/${index1Based}`,
         {
@@ -906,6 +993,50 @@ export const useOBSProxy = () => {
     setIsQueueActionLoading(true);
     setSongQueueError(null);
     try {
+      // Preflight Twitch status for admin-protected queue actions
+      setAuthSyncing(true);
+      try {
+        const s = await fetch(`${PROXY_BASE_URL}/api/twitch/status`);
+        const sd = await s.json().catch(() => ({}));
+        if (!sd?.authenticated) {
+          if (sd?.method === 'token_fallback') {
+            await fetch(`${PROXY_BASE_URL}/api/twitch/auth/bootstrap`, {
+              method: 'POST',
+              credentials: 'include',
+            }).catch(() => {});
+            const s2 = await fetch(`${PROXY_BASE_URL}/api/twitch/status`);
+            const sd2 = await s2.json().catch(() => ({}));
+            if (!sd2?.authenticated) {
+              await fetch(`${PROXY_BASE_URL}/api/twitch/refresh`, {
+                method: 'POST',
+              }).catch(() => {});
+              const s3 = await fetch(`${PROXY_BASE_URL}/api/twitch/status`);
+              const sd3 = await s3.json().catch(() => ({}));
+              if (!sd3?.authenticated) {
+                setNeedsReauthKind('twitch');
+                throw new Error(
+                  'Twitch not authenticated. Please re-auth and try again.'
+                );
+              }
+            }
+          } else {
+            await fetch(`${PROXY_BASE_URL}/api/twitch/refresh`, {
+              method: 'POST',
+            }).catch(() => {});
+            const s2 = await fetch(`${PROXY_BASE_URL}/api/twitch/status`);
+            const sd2 = await s2.json().catch(() => ({}));
+            if (!sd2?.authenticated) {
+              setNeedsReauthKind('twitch');
+              throw new Error(
+                'Twitch not authenticated. Please re-auth and try again.'
+              );
+            }
+          }
+        }
+      } finally {
+        setAuthSyncing(false);
+      }
+
       const response = await fetch(`${PROXY_BASE_URL}/api/song-queue/skip`, {
         method: 'POST',
       });
@@ -928,6 +1059,33 @@ export const useOBSProxy = () => {
     setIsQueueActionLoading(true);
     setSongQueueError(null);
     try {
+      // Preflight Spotify status and try silent refresh if needed
+      setAuthSyncing(true);
+      let healthy = false;
+      try {
+        const s = await fetch(`${PROXY_BASE_URL}/api/spotify/status`);
+        const sd = await s.json().catch(() => ({}));
+        healthy = !!sd?.authenticated;
+        if (!healthy) {
+          const r = await fetch(`${PROXY_BASE_URL}/api/spotify/refresh`, {
+            method: 'POST',
+          });
+          if (r.ok) {
+            const s2 = await fetch(`${PROXY_BASE_URL}/api/spotify/status`);
+            const sd2 = await s2.json().catch(() => ({}));
+            healthy = !!sd2?.authenticated;
+          }
+        }
+      } finally {
+        setAuthSyncing(false);
+      }
+      if (!healthy) {
+        setNeedsReauthKind('spotify');
+        throw new Error(
+          'Spotify not authenticated. Please re-auth and try again.'
+        );
+      }
+
       const response = await fetch(`${PROXY_BASE_URL}/api/spotify/queue`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -964,6 +1122,126 @@ export const useOBSProxy = () => {
     }
   }, []);
 
+  // Re-auth helpers
+  const base64Url = (input: string) =>
+    input.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+  const makeVerifier = async (): Promise<string> => {
+    const bytes = await Random.getRandomBytesAsync(64);
+    const chars =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+    let out = '';
+    for (let i = 0; i < bytes.length; i++)
+      out += chars[bytes[i] % chars.length];
+    return out;
+  };
+
+  const reauthSpotify = useCallback(async () => {
+    try {
+      const redirectUri =
+        Platform.OS === 'web'
+          ? 'https://127.0.0.1:8443/oauthredirect'
+          : 'obshelper://oauthredirect';
+      const clientId =
+        process.env.EXPO_PUBLIC_SPOTIFY_CLIENT_ID ||
+        (Constants.expoConfig?.extra?.spotifyClientId as string) ||
+        '';
+      const scopes = ['user-modify-playback-state', 'user-read-playback-state'];
+      const verifier = await makeVerifier();
+      const digest = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        verifier,
+        { encoding: Crypto.CryptoEncoding.BASE64 }
+      );
+      const challenge = base64Url(digest);
+      const params = new URLSearchParams({
+        client_id: clientId,
+        response_type: 'code',
+        redirect_uri: redirectUri,
+        code_challenge_method: 'S256',
+        code_challenge: challenge,
+        scope: scopes.join(' '),
+      });
+      const authUrl = `https://accounts.spotify.com/authorize?${params.toString()}`;
+      if (Platform.OS === 'web') {
+        try {
+          sessionStorage.setItem('spotify_pkce_verifier', verifier);
+          sessionStorage.setItem('spotify_redirect_uri', redirectUri);
+          try {
+            localStorage.setItem('spotify_pkce_verifier', verifier);
+          } catch {}
+          try {
+            localStorage.setItem('spotify_redirect_uri', redirectUri);
+          } catch {}
+        } catch {}
+        window.location.href = authUrl;
+        return;
+      } else {
+        const result = await WebBrowser.openAuthSessionAsync(
+          authUrl,
+          redirectUri
+        );
+        if (result.type === 'success' && result.url) {
+          const parsed = Linking.parse(result.url);
+          const code = parsed.queryParams?.code as string | undefined;
+          if (code) {
+            const proxyBase = getProxyBase();
+            await fetch(`${proxyBase}/api/spotify/auth/exchange`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                code,
+                codeVerifier: verifier,
+                redirectUri,
+              }),
+            });
+            setNeedsReauthKind('none');
+            await fetchSongQueue();
+          }
+        }
+      }
+    } catch {}
+  }, [getProxyBase, fetchSongQueue]);
+
+  const reauthTwitch = useCallback(async () => {
+    const base = getProxyBase();
+    const url = `${base}/api/twitch/auth`;
+    if (Platform.OS === 'web') {
+      window.location.href = url;
+      return;
+    }
+    try {
+      await WebBrowser.openAuthSessionAsync(url);
+      setNeedsReauthKind('none');
+    } catch {}
+  }, [getProxyBase]);
+
+  const clearAuthData = useCallback(
+    async (kind: 'spotify' | 'twitch') => {
+      const base = getProxyBase();
+      try {
+        if (kind === 'spotify') {
+          await fetch(`${base}/api/spotify/clear-tokens`, { method: 'POST' });
+          if (Platform.OS === 'web') {
+            try {
+              sessionStorage.removeItem('spotify_pkce_verifier');
+              sessionStorage.removeItem('spotify_redirect_uri');
+            } catch {}
+            try {
+              localStorage.removeItem('spotify_pkce_verifier');
+              localStorage.removeItem('spotify_redirect_uri');
+            } catch {}
+          }
+        } else {
+          await fetch(`${base}/api/twitch/auth/logout`, { method: 'GET' });
+        }
+      } finally {
+        setNeedsReauthKind('none');
+      }
+    },
+    [getProxyBase]
+  );
+
   // Helper function to get error message
   const getErrorMessage = (error: any): string => {
     if (error instanceof Error) {
@@ -977,6 +1255,9 @@ export const useOBSProxy = () => {
     isConnecting,
     isReconnecting,
     connectionError,
+    authSyncing,
+    needsReauthKind,
+    setNeedsReauthKind,
     scenes,
     currentScene,
     obsUrl,
@@ -1005,6 +1286,9 @@ export const useOBSProxy = () => {
     nowPlaying,
     remainingMs,
     hiddenItemId,
+    reauthSpotify,
+    reauthTwitch,
+    clearAuthData,
     showPasswordPrompt,
     setShowPasswordPrompt,
     passwordPromptError,
