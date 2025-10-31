@@ -70,10 +70,10 @@ export default function ScenesScreen() {
       return (
         process.env.EXPO_PUBLIC_PROXY_BASE_URL ||
         (Constants.expoConfig?.extra?.proxyBaseUrl as string) ||
-        'http://localhost:3001'
+        'https://localhost:3001'
       );
     } catch {
-      return process.env.EXPO_PUBLIC_PROXY_BASE_URL || 'http://localhost:3001';
+      return process.env.EXPO_PUBLIC_PROXY_BASE_URL || 'https://localhost:3001';
     }
   };
 

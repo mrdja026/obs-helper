@@ -34,7 +34,10 @@ export default {
       typedRoutes: true,
     },
     extra: {
-      proxyBaseUrl: 'http://192.168.0.234:3001',
+      proxyBaseUrl:
+        process.env.EXPO_PUBLIC_PROXY_BASE_URL ||
+        process.env.PUBLIC_BASE_URL ||
+        'https://localhost:3001',
       defaultObsUrl: 'ws://127.0.0.1:4456',
       defaultObsPassword: process.env.OBS_PASSWORD || '',
     },

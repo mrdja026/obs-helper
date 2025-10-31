@@ -114,7 +114,7 @@ export default function SettingsScreen() {
               process.env.EXPO_PUBLIC_PROXY_BASE_URL ||
               (require('expo-constants').default.expoConfig?.extra
                 ?.proxyBaseUrl as string) ||
-              'http://localhost:3001';
+              'https://localhost:3001';
             await fetch(`${proxyBase}/api/spotify/auth/exchange`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },

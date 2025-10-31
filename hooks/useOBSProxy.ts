@@ -70,12 +70,26 @@ const STORAGE_KEY_AUTO_CONNECT = 'obs_websocket_auto_connect';
 const STORAGE_KEY_PASSWORD_PROMPTED = 'obs_websocket_password_prompted';
 
 // Backend proxy configuration
-// - On web, use same-origin ('') to avoid mixed-content; proxy handles /api
-// - On native, use configured LAN/localhost proxyBaseUrl
-const PROXY_BASE_URL =
-  Platform.OS === 'web'
-    ? ''
-    : Constants.expoConfig?.extra?.proxyBaseUrl || 'http://localhost:3001';
+// - On web, prefer same-origin when unset; otherwise use env/extra proxyBaseUrl
+// - On native, fall back to EXPO_PUBLIC_PROXY_BASE_URL or HTTPS localhost
+const resolveProxyBase = () => {
+  const extraBase =
+    (Constants.expoConfig as any)?.extra?.proxyBaseUrl ||
+    process.env.EXPO_PUBLIC_PROXY_BASE_URL ||
+    process.env.PUBLIC_BASE_URL;
+  const sanitized =
+    typeof extraBase === 'string'
+      ? extraBase.trim().replace(/\/+$/, '')
+      : null;
+
+  if (Platform.OS === 'web') {
+    return sanitized || '';
+  }
+
+  return sanitized || 'https://localhost:3001';
+};
+
+const PROXY_BASE_URL = resolveProxyBase();
 const PROXY_WS_URL =
   Platform.OS === 'web'
     ? typeof window !== 'undefined'
@@ -84,7 +98,7 @@ const PROXY_WS_URL =
         window.location.host +
         '/ws'
       : 'ws://127.0.0.1:8443/ws'
-    : PROXY_BASE_URL.replace('http', 'ws');
+    : PROXY_BASE_URL.replace(/^http/, 'ws');
 const PROXY_WS_TOKEN: string | undefined = (Constants.expoConfig as any)?.extra
   ?.proxyWsToken;
 const DEFAULT_OBS_URL =
@@ -127,6 +141,7 @@ export const useOBSProxy = () => {
   const [songQueue, setSongQueue] = useState<SongQueueItem[]>([]);
   const [songQueueError, setSongQueueError] = useState<string | null>(null);
   const [isQueueActionLoading, setIsQueueActionLoading] = useState(false);
+  const songQueueRef = useRef<SongQueueItem[]>([]);
 
   // Auth guard UI state
   const [authSyncing, setAuthSyncing] = useState(false);
@@ -145,10 +160,12 @@ export const useOBSProxy = () => {
   const [remainingMs, setRemainingMs] = useState<number | null>(null);
   const [hiddenItemId, setHiddenItemId] = useState<string | null>(null);
 
+  useEffect(() => {
+    songQueueRef.current = songQueue;
+  }, [songQueue]);
+
   // Reconnection timer
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Polling timer for current scene
-  const pollingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // WebSocket ref
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -202,9 +219,6 @@ export const useOBSProxy = () => {
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
       }
-      if (pollingTimerRef.current) {
-        clearInterval(pollingTimerRef.current);
-      }
       if (wsRef.current) {
         try {
           wsRef.current.close();
@@ -214,111 +228,6 @@ export const useOBSProxy = () => {
     };
   }, []);
 
-  // Poll Spotify playback progress every 2s and derive remaining time
-  useEffect(() => {
-    const POLL_INTERVAL_MS = 2000;
-    const END_GRACE_MS = 1500;
-    let isMounted = true;
-    let failureCount = 0;
-
-    const tick = async () => {
-      try {
-        const response = await fetch(`${PROXY_BASE_URL}/api/spotify/debug`);
-        if (!response.ok) throw new Error(`debug ${response.status}`);
-        const data = await response.json();
-        const playback = data?.playback || null;
-        const item = playback?.item || null;
-        const progress =
-          typeof playback?.progressMs === 'number' ? playback.progressMs : null;
-        const duration =
-          typeof item?.durationMs === 'number' ? item.durationMs : null;
-
-        if (!isMounted) return;
-
-        if (!item || duration === null || progress === null) {
-          setProgressMs(null);
-          setRemainingMs(null);
-          setHiddenItemId(null);
-          failureCount = 0;
-          return;
-        }
-
-        const rem = Math.max(0, duration - progress);
-        setNowPlaying({
-          name: typeof item.name === 'string' ? item.name : 'Unknown',
-          uri: typeof item.uri === 'string' ? item.uri : '',
-          artists: Array.isArray(item.artists) ? item.artists : [],
-          durationMs: duration,
-        });
-        setProgressMs(progress);
-        setRemainingMs(rem);
-
-        const head = Array.isArray(songQueue) ? songQueue[0] : undefined;
-        const headUri = head?.spotify?.uri;
-        const matchesHead = !!headUri && headUri === item.uri;
-        setHiddenItemId(
-          matchesHead && rem <= END_GRACE_MS ? head?.id ?? null : null
-        );
-
-        // Auto-remove from server when head track finishes
-        const currentHeadId = head?.id ?? null;
-        if (matchesHead && rem <= END_GRACE_MS && currentHeadId) {
-          if (autoSkipHeadIdRef.current !== currentHeadId) {
-            try {
-              const r = await fetch(`${PROXY_BASE_URL}/api/song-queue/skip`, {
-                method: 'POST',
-              });
-              if (r.ok) {
-                autoSkipHeadIdRef.current = currentHeadId;
-                // Optimistically remove head locally to avoid flicker/mismatch
-                setSongQueue((prev) =>
-                  Array.isArray(prev) &&
-                  prev.length > 0 &&
-                  prev[0]?.id === currentHeadId
-                    ? prev.slice(1)
-                    : prev
-                );
-                setHiddenItemId(null);
-              } else {
-                const txt = await r.text().catch(() => '');
-                setSongQueueError(
-                  `Auto-skip failed: ${r.status}${txt ? ` ${txt}` : ''}`
-                );
-              }
-            } catch {}
-          }
-        } else {
-          // Reset guard when head changes or track not ending
-          if (!currentHeadId) {
-            autoSkipHeadIdRef.current = null;
-          } else if (
-            autoSkipHeadIdRef.current &&
-            autoSkipHeadIdRef.current !== currentHeadId
-          ) {
-            autoSkipHeadIdRef.current = null;
-          }
-        }
-
-        failureCount = 0;
-      } catch {
-        if (!isMounted) return;
-        failureCount += 1;
-        if (failureCount > 3) {
-          setNowPlaying(null);
-          setProgressMs(null);
-          setRemainingMs(null);
-          setHiddenItemId(null);
-        }
-      }
-    };
-
-    const timer = setInterval(tick, POLL_INTERVAL_MS);
-    void tick();
-    return () => {
-      isMounted = false;
-      clearInterval(timer);
-    };
-  }, [songQueue]);
 
   const getProxyBase = useCallback(() => {
     if (Platform.OS === 'web') return '';
@@ -411,7 +320,87 @@ export const useOBSProxy = () => {
               const queue: SongQueueItem[] | undefined = msg?.data?.queue;
               if (Array.isArray(queue)) {
                 // Ensure we only keep up to 10 as per backend capacity
-                setSongQueue(queue.slice(0, 10));
+                const nextQueue = queue.slice(0, 10);
+                songQueueRef.current = nextQueue;
+                setSongQueue(nextQueue);
+              }
+              break;
+            }
+            case 'spotifyPlayback': {
+              const payload = msg?.data || null;
+              const playback = payload?.playback || null;
+              const item = playback?.item || null;
+              const progress =
+                typeof playback?.progressMs === 'number'
+                  ? playback.progressMs
+                  : null;
+              const duration =
+                typeof item?.durationMs === 'number'
+                  ? item.durationMs
+                  : null;
+
+              if (item && typeof item?.name === 'string') {
+                setNowPlaying({
+                  name: item.name,
+                  uri: typeof item.uri === 'string' ? item.uri : '',
+                  artists: Array.isArray(item.artists) ? item.artists : [],
+                  durationMs: duration ?? null,
+                });
+              } else {
+                setNowPlaying(null);
+              }
+
+              setProgressMs(progress);
+              setRemainingMs(
+                progress !== null && duration !== null
+                  ? Math.max(0, duration - progress)
+                  : null
+              );
+
+              const head = songQueueRef.current?.[0];
+              const headUri = head?.spotify?.uri;
+              const matchesHead =
+                !!headUri && typeof item?.uri === 'string' && headUri === item.uri;
+              const END_GRACE_MS = 1500;
+              const rem =
+                progress !== null && duration !== null
+                  ? Math.max(0, duration - progress)
+                  : null;
+              setHiddenItemId(
+                matchesHead && rem !== null && rem <= END_GRACE_MS
+                  ? head?.id ?? null
+                  : null
+              );
+
+              if (matchesHead && rem !== null && rem <= END_GRACE_MS && head?.id) {
+                if (autoSkipHeadIdRef.current !== head.id) {
+                  autoSkipHeadIdRef.current = head.id;
+                  fetch(`${PROXY_BASE_URL}/api/song-queue/skip`, {
+                    method: 'POST',
+                  })
+                    .then(async (r) => {
+                      if (!r.ok) {
+                        const txt = await r.text().catch(() => '');
+                        setSongQueueError(
+                          `Auto-skip failed: ${r.status}${txt ? ` ${txt}` : ''}`
+                        );
+                        return;
+                      }
+                      setSongQueue((prev) =>
+                        Array.isArray(prev) && prev.length > 0 && prev[0]?.id === head.id
+                          ? prev.slice(1)
+                          : prev
+                      );
+                      setHiddenItemId(null);
+                    })
+                    .catch(() => {});
+                }
+              } else if (
+                head?.id &&
+                autoSkipHeadIdRef.current &&
+                autoSkipHeadIdRef.current !== head.id
+              ) {
+                autoSkipHeadIdRef.current = null;
               }
               break;
             }
@@ -709,9 +698,8 @@ export const useOBSProxy = () => {
         // The polling will retry automatically
       }
 
-      // Start polling for current scene
-      console.log('Starting scene polling...');
-      pollingTimerRef.current = setInterval(fetchCurrentScene, 1000);
+      // Scene updates now rely on OBS WebSocket events
+      console.log('OBS scene state initialized');
     } catch (error) {
       console.error('Connection failed with error:', error);
       if (error instanceof Error) {
@@ -802,10 +790,6 @@ export const useOBSProxy = () => {
 
   const disconnect = useCallback(() => {
     console.log('Disconnecting from OBS...');
-    if (pollingTimerRef.current) {
-      clearInterval(pollingTimerRef.current);
-      pollingTimerRef.current = null;
-    }
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
